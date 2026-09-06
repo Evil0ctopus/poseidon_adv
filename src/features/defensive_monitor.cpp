@@ -420,7 +420,8 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
                     if (s_deauth_srcs[slot].consec_over >= DM_DEAUTH_DEBOUNCE_WINDOWS) {
                         char detail[40];
                         snprintf(detail, sizeof(detail), "rate>%u/s x%u windows",
-                                 DM_DEAUTH_RATE_THRESHOLD, s_deauth_srcs[slot].consec_over);
+                                 (unsigned)DM_DEAUTH_RATE_THRESHOLD,
+                                 (unsigned)s_deauth_srcs[slot].consec_over);
                         enqueue_alert(DM_CLS_DEAUTH_FLOOD, (uint8_t *)s_deauth_srcs[slot].src,
                                       nullptr, pkt->rx_ctrl.rssi, s_current_ch, detail);
                         s_deauth_srcs[slot].consec_over = 0;  /* cooldown */

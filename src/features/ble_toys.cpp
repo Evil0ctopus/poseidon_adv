@@ -65,7 +65,7 @@ static const char *identify_toy(const NimBLEAdvertisedDevice *d)
     return nullptr;
 }
 
-class scan_cb : public NimBLEScanCallbacks {
+class ble_toys_scan_cb : public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice *d) override {
         const char *brand = identify_toy(d);
         if (!brand) return;
@@ -91,7 +91,7 @@ class scan_cb : public NimBLEScanCallbacks {
         t.rssi = d->getRSSI();
     }
 };
-static scan_cb s_cb;
+static ble_toys_scan_cb s_cb;
 
 static NimBLEClient *s_client = nullptr;
 static NimBLERemoteCharacteristic *s_tx_char = nullptr;

@@ -26,6 +26,12 @@ bool nrf24_begin(void)
     if (s_up) nrf24_end();
     nrf24_park_others();
 
+    /* The SD card is optional, but its HSPI pins are shared with this hat. */
+    if (!sd_prepare_bus()) {
+        Serial.println("[nrf24] shared SPI bus unavailable");
+        return false;
+    }
+
     /* Use the SD's HSPI instance (pins 40/39/14). Global SPI is FSPI,
      * which M5GFX claims for the TFT — calling SPI.begin() there
      * stole the GPIO matrix from the display every nRF24 op and the

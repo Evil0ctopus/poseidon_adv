@@ -15,6 +15,9 @@
 bool sd_mount(void);
 bool sd_is_mounted(void);
 
+/* Initialize the shared HSPI pins even when no SD card is inserted. */
+bool sd_prepare_bus(void);
+
 /* Content wipe: recursive delete of every file/dir. Only does a real
  * f_mkfs if the card is UNmountable to begin with. Re-mounts on
  * success. BLOCKING. */

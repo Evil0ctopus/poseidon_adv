@@ -386,7 +386,7 @@ static void handle_decoded_data(uint32_t from, uint32_t to, uint8_t hops,
             reply[0] = '\0';
             if (!strncmp(cmd, "ping", 4)) {
                 snprintf(reply, sizeof(reply),
-                         "pong from !%08x  rssi=%d snr=%.1f hops=%u",
+                         "pong from !%08x  rssi=%d snr=%d hops=%u",
                          (unsigned)mesh_own_node_id(),
                          (int)rssi, snr, (unsigned)hops);
             } else if (!strncmp(cmd, "status", 6)) {

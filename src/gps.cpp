@@ -2,7 +2,9 @@
  * gps.cpp — minimal NMEA parser (GGA + RMC).
  */
 #include "gps.h"
+#include "gps_nmea.h"
 #include <HardwareSerial.h>
+#include <M5Unified.h>
 #include <Preferences.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -29,6 +31,13 @@ static volatile bool s_gps_alive = false;
 bool gps_begin(void)
 {
     if (s_started) return true;
+    /* CAP-LoRa1262 reference software enables the Cardputer's external 5V
+     * rail before opening the ATGM336H receiver. Make that requirement
+     * explicit instead of relying on the board-default power configuration. */
+    M5.Power.setExtOutput(true);
+    /* Match Bruce's Cardputer GPS startup: release the shared RX pad before
+     * attaching UART1 so a prior peripheral owner cannot hold it. */
+    pinMode(GPS_UART_RX_PIN, INPUT);
     s_uart.begin(s_baud, SERIAL_8N1, GPS_UART_RX_PIN, GPS_UART_TX_PIN);
     s_started = true;
     return true;
@@ -209,13 +218,27 @@ static int split_csv(char *line, char **fields, int max)
     return n;
 }
 
+static void invalidate_fix(void)
+{
+    gps_fix_t fix = s_fix;
+    fix.valid = false;
+    fix.time_ms = millis();
+    portENTER_CRITICAL(&s_fix_mux);
+    s_fix = fix;
+    portEXIT_CRITICAL(&s_fix_mux);
+}
+
 static void parse_gga(char *line)
 {
     char *f[16] = {0};
     int n = split_csv(line, f, 16);
     if (n < 10) return;
     int fix_quality = atoi(f[6]);
-    if (fix_quality < 1) return;
+    s_diag.last_gga_quality = fix_quality;
+    if (fix_quality < 1) {
+        invalidate_fix();
+        return;
+    }
     gps_fix_t fix = s_fix;
     fix.lat_deg = nmea_to_degrees(f[2], f[3][0]);
     fix.lon_deg = nmea_to_degrees(f[4], f[5][0]);
@@ -235,7 +258,12 @@ static void parse_rmc(char *line)
     char *f[16] = {0};
     int n = split_csv(line, f, 16);
     if (n < 10) return;
-    if (f[2][0] != 'A') return;  /* A = active, V = void */
+    if (f[2][0] != 'A') {
+        s_diag.last_rmc_status = f[2][0];
+        invalidate_fix();
+        return;  /* A = active, V = void */
+    }
+    s_diag.last_rmc_status = f[2][0];
     gps_fix_t fix = s_fix;
     fix.lat_deg    = nmea_to_degrees(f[3], f[4][0]);
     fix.lon_deg    = nmea_to_degrees(f[5], f[6][0]);
@@ -259,14 +287,38 @@ static void process_line(char *line)
     s_diag.lines++;
     strncpy(s_diag.last, line, sizeof(s_diag.last) - 1);
     s_diag.last[sizeof(s_diag.last) - 1] = '\0';
+    /* Capture the receiver's raw validity fields before the shared helper
+     * can reject a no-fix sentence. */
+    char probe[128];
+    strncpy(probe, line, sizeof(probe) - 1);
+    probe[sizeof(probe) - 1] = '\0';
+    char *fields[16] = {0};
+    int field_count = split_csv(probe, fields, 16);
+    if ((strncmp(line, "$GPGGA", 6) == 0 || strncmp(line, "$GNGGA", 6) == 0) && field_count > 6) {
+        strncpy(s_diag.last_gga, line, sizeof(s_diag.last_gga) - 1);
+        s_diag.last_gga[sizeof(s_diag.last_gga) - 1] = '\0';
+        s_diag.last_gga_quality = atoi(fields[6]);
+    } else if ((strncmp(line, "$GPRMC", 6) == 0 || strncmp(line, "$GNRMC", 6) == 0) && field_count > 2) {
+        strncpy(s_diag.last_rmc, line, sizeof(s_diag.last_rmc) - 1);
+        s_diag.last_rmc[sizeof(s_diag.last_rmc) - 1] = '\0';
+        s_diag.last_rmc_status = fields[2][0];
+    }
     /* Drop sentences whose *HH checksum doesn't match — RF noise / baud
      * glitches can otherwise yield a valid-looking but wrong fix. */
     if (!nmea_checksum_ok(line)) return;
     if (strncmp(line, "$GPGGA", 6) == 0 || strncmp(line, "$GNGGA", 6) == 0) {
         s_diag.gga++;
+        if (!gps_nmea_sentence_has_fix(line)) {
+            invalidate_fix();
+            return;
+        }
         parse_gga(line);
     } else if (strncmp(line, "$GPRMC", 6) == 0 || strncmp(line, "$GNRMC", 6) == 0) {
         s_diag.rmc++;
+        if (!gps_nmea_sentence_has_fix(line)) {
+            invalidate_fix();
+            return;
+        }
         parse_rmc(line);
     }
 }

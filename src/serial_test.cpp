@@ -5,6 +5,7 @@
 #include "input.h"
 #include "menu.h"
 #include "version.h"
+#include "gps.h"
 #include <Arduino.h>
 
 extern const menu_node_t *g_current_feature_item;  /* from menu.cpp */
@@ -51,6 +52,27 @@ static void serial_cmd_task(void *)
                     /* TEMP DIAGNOSTIC: CC1101 chip-ID + live RSSI probe. */
                     extern void cc1101_diag(void);
                     cc1101_diag();
+                }
+                else if (buf[0] == 'G') {
+                    const gps_diag_t &dg = gps_diag();
+                    const gps_fix_t &fix = gps_get();
+                    Serial.printf("GPS] baud=%lu bytes=%lu lines=%lu GGA=%lu RMC=%lu q=%d status=%c overflows=%lu last=\"%s\"\n",
+                                  (unsigned long)gps_current_baud(),
+                                  (unsigned long)dg.bytes,
+                                  (unsigned long)dg.lines,
+                                  (unsigned long)dg.gga,
+                                  (unsigned long)dg.rmc,
+                                  dg.last_gga_quality,
+                                  dg.last_rmc_status ? dg.last_rmc_status : '-',
+                                  (unsigned long)dg.overflows,
+                                  dg.last);
+                    Serial.printf("GPS] GGA=\"%s\"\nGPS] RMC=\"%s\"\n",
+                                  dg.last_gga[0] ? dg.last_gga : "(none)",
+                                  dg.last_rmc[0] ? dg.last_rmc : "(none)");
+                    Serial.printf("GPS] fix=%s sats=%u lat=%.6f lon=%.6f alt=%.1f hdop=%.1f utc=\"%s\"\n",
+                                  fix.valid ? "yes" : "no",
+                                  fix.sats, fix.lat_deg, fix.lon_deg, fix.alt_m,
+                                  fix.hdop, fix.utc);
                 }
                 else if (buf[0] == '?') {
                     Serial.printf("[CMD] poseidon %s harness=v1\n",

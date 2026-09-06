@@ -34,6 +34,12 @@ bool cc1101_begin(float freq_mhz)
     if (s_up) cc1101_end();
     cc1101_park_others();
 
+    /* The SD card is optional, but its HSPI pins are shared with this hat. */
+    if (!sd_prepare_bus()) {
+        Serial.println("[cc1101] shared SPI bus unavailable");
+        return false;
+    }
+
     /* Reuse the SD's HSPI instance (pins 40/39/14 are shared). With
      * the bmorcelli fork of the ELECHOUSE lib we can pass that
      * instance in via setSPIinstance so the lib skips its own

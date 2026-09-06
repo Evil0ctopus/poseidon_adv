@@ -33,16 +33,31 @@
 static SPIClass sd_spi(HSPI);
 
 static bool s_mounted = false;
+static bool s_bus_started = false;
 
 bool sd_is_mounted(void) { return s_mounted; }
 
 SPIClass &sd_get_spi(void) { return sd_spi; }
+
+bool sd_prepare_bus(void)
+{
+    if (s_bus_started) return true;
+
+    pinMode(SD_MISO, INPUT_PULLUP);
+    pinMode(SD_MOSI, INPUT_PULLUP);
+    pinMode(SD_CS,   INPUT_PULLUP);
+    pinMode(SD_SCK,  INPUT_PULLUP);
+    sd_spi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    s_bus_started = true;
+    return true;
+}
 
 bool sd_remount(void)
 {
     s_mounted = false;
     SD.end();
     sd_spi.end();
+    s_bus_started = false;
     delay(10);
     return sd_mount();
 }
@@ -51,6 +66,7 @@ static bool try_mount(int hz, bool fmt_if_fail, const char *tag)
 {
     SD.end();
     sd_spi.end();
+    s_bus_started = false;
 
     /* SD cards in SPI mode require pull-ups on MISO, CS, and MOSI.
      * The Cardputer board doesn't include them and Arduino's
@@ -65,7 +81,7 @@ static bool try_mount(int hz, bool fmt_if_fail, const char *tag)
     digitalWrite(SD_CS, HIGH);
     delay(10);
 
-    sd_spi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    sd_prepare_bus();
     /* max_files=2 (was 5). Each handle reserves ~600 B of FATFS state +
      * a sector buffer slot. Our features only ever hold 1-2 files open
      * simultaneously (CSV log + transient read), so 5 was wasted heap.
@@ -207,7 +223,6 @@ bool sd_force_format(void)
 {
     s_mounted = false;
     SD.end();
-    sd_spi.end();
     delay(30);
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
@@ -221,6 +236,10 @@ bool sd_force_format(void)
     bus.quadwp_io_num   = -1;
     bus.quadhd_io_num   = -1;
     bus.max_transfer_sz = 4096;
+    /* Keep the shared SPIClass bus alive here. SD.end() unregisters the FAT
+     * volume, but ending SPI detaches the pins while the ESP-IDF SDSPI host
+     * still expects the existing HSPI allocation. The temporary host can
+     * share that initialized bus; sd_mount() reclaims it after unmount. */
     esp_err_t be = spi_bus_initialize((spi_host_device_t)host.slot, &bus, SPI_DMA_CH_AUTO);
     /* ESP_ERR_INVALID_STATE = bus already initialised — fine, continue. */
     if (be != ESP_OK && be != ESP_ERR_INVALID_STATE) {

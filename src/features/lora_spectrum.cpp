@@ -32,6 +32,11 @@ static const lora_range_t RANGES[] = {
 };
 #define RANGE_COUNT 3
 
+static void fill_rssi_floor(int8_t *values, size_t count)
+{
+    for (size_t i = 0; i < count; ++i) values[i] = -127;
+}
+
 /* Last N captured packets shown as an overlay. */
 #define PKT_HIST 6
 struct pkt_t { float rssi; float snr; uint8_t len; uint32_t when; uint8_t preview[12]; };
@@ -116,8 +121,8 @@ static void run_bars(SX1262 &radio, const lora_range_t &range)
 {
     auto &d = M5Cardputer.Display;
     const int GX = 24, GY = BODY_Y + 14, GW = 140, GH = BODY_H - 34;
-    int8_t hist[140]; memset(hist, -130, sizeof(hist));
-    int8_t peak[140]; memset(peak, -130, sizeof(peak));
+    int8_t hist[140]; fill_rssi_floor(hist, 140);
+    int8_t peak[140]; fill_rssi_floor(peak, 140);
     int hp = 0;
 
     ui_force_clear_body();
@@ -177,7 +182,7 @@ static void run_bars(SX1262 &radio, const lora_range_t &range)
         while (millis() - t0 < 30) {
             uint16_t k = input_poll();
             if (k == PK_ESC) return;
-            if (k == 'r' || k == 'R') { memset(peak, -130, sizeof(peak)); break; }
+            if (k == 'r' || k == 'R') { fill_rssi_floor(peak, 140); break; }
             delay(4);
         }
     }
@@ -249,7 +254,7 @@ static void run_scope(SX1262 &radio, float freq)
 
     /* Retune only once per frequency change. */
     float cur_freq = -1;
-    int8_t hist[232]; memset(hist, -130, sizeof(hist));
+    int8_t hist[232]; fill_rssi_floor(hist, 232);
     int hp = 0;
 
     ui_force_clear_body();

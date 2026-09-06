@@ -131,7 +131,7 @@ static void classify(const NimBLEAdvertisedDevice *d, char *out, size_t out_sz)
 
 static volatile uint32_t s_cb_fire_count = 0;
 
-class scan_cb : public NimBLEScanCallbacks {
+class ble_scan_cb : public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice *d) override {
         s_cb_fire_count++;
         /* Dedup by address. */
@@ -156,8 +156,8 @@ class scan_cb : public NimBLEScanCallbacks {
 
 /* Static-allocated so repeat-entry doesn't leak. NimBLE doesn't own
  * the object after scan stops — it just drops the callback pointer. */
-static scan_cb s_cb_obj;
-static scan_cb *s_cb = &s_cb_obj;
+static ble_scan_cb s_cb_obj;
+static ble_scan_cb *s_cb = &s_cb_obj;
 
 static bool dev_matches_filter(const ble_dev_t &d)
 {
