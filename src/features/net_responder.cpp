@@ -11,7 +11,7 @@
  * reply will attempt to authenticate against us. A bundled TCP 445
  * stub accepts the connect + NEGOTIATE / SESSION_SETUP so the OS
  * completes an NTLMv2 exchange — we log the challenge + response
- * into /poseidon/ntlm.log for hashcat mode 5600.
+ * into /poseidon/credentials/ntlm.log for hashcat mode 5600.
  */
 #include "app.h"
 #include "../theme.h"
@@ -190,14 +190,14 @@ void feat_net_responder(void)
         return;
     }
     if (!sd_mount()) { ui_toast("SD needed for log", T_BAD, 1500); return; }
-    SD.mkdir("/poseidon");
+    if (!sd_ensure_layout()) { ui_toast("cant create log dir", T_BAD, 1500); return; }
     /* POS-AUDIT-269 / net-009: roll the capture log once it crosses
      * 64 KB. Previous behaviour appended forever across sessions and
      * a long Responder run could fill the SD with a single multi-MB
      * file. sd_rotate_on_size moves the old file to ntlm.log.1 (single
      * generation; older rotations would just waste write cycles). */
-    sd_rotate_on_size("/poseidon/ntlm.log", 64 * 1024);
-    s_log = SD.open("/poseidon/ntlm.log", FILE_APPEND);
+    sd_rotate_on_size(SD_NTLM_PATH, 64 * 1024);
+    s_log = SD.open(SD_NTLM_PATH, FILE_APPEND);
 
     s_queries = s_replies = s_hashes = 0;
 
@@ -233,7 +233,7 @@ void feat_net_responder(void)
             ui_text_w(4, BODY_Y + 58, 150, T_FG, "replies: %lu", (unsigned long)s_replies);
             ui_text_w(4, BODY_Y + 68, 150, s_hashes ? T_GOOD : T_DIM,
                       "hashes:  %lu", (unsigned long)s_hashes);
-            ui_text_w(4, BODY_Y + 82, 150, T_DIM, "/poseidon/ntlm.log");
+            ui_text_w(4, BODY_Y + 82, 150, T_DIM, "credentials/ntlm.log");
             ui_draw_status(radio_name(), "respond");
         }
         ui_waves(200, BODY_Y + 56, 30, T_GOOD);

@@ -371,8 +371,14 @@ void feat_settings(void)
         if (k == PK_ESC) return;
         if (k == 'w' || k == 'W') { extern void feat_wifi_connect(); feat_wifi_connect(); return; }
         if (k == 'c' || k == 'C') {
-            if (sd_mount() && SD.remove("/poseidon/creds.log")) ui_toast("cleared", T_GOOD, 600);
-            else ui_toast("fail", T_BAD, 600);
+            bool removed = false;
+            if (sd_mount()) {
+                if (SD.exists(SD_CREDS_PATH)) removed = SD.remove(SD_CREDS_PATH) || removed;
+                if (SD.exists("/poseidon/creds.log"))
+                    removed = SD.remove("/poseidon/creds.log") || removed;
+            }
+            ui_toast(removed ? "cleared" : "no creds log",
+                     removed ? T_GOOD : T_DIM, 600);
             return;
         }
         if (k == 'f' || k == 'F') {

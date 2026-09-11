@@ -6,6 +6,7 @@
 #include "menu.h"
 #include "version.h"
 #include "gps.h"
+#include "heap_budget.h"
 #include <Arduino.h>
 
 extern const menu_node_t *g_current_feature_item;  /* from menu.cpp */
@@ -37,8 +38,10 @@ static void serial_cmd_task(void *)
                     uint32_t idle = input_last_input_ms() ? (now - input_last_input_ms()) : 0;
                     const char *feat = g_current_feature_item
                         ? g_current_feature_item->label : "(menu)";
-                    Serial.printf("[STATE] heap=%u up=%lu idle=%lu feat=\"%s\"\n",
-                                  (unsigned)ESP.getFreeHeap(),
+                    Serial.printf("[STATE] heap=%u largest=%u min=%u up=%lu idle=%lu feat=\"%s\"\n",
+                                  (unsigned)heap_free_internal(),
+                                  (unsigned)heap_largest_internal(),
+                                  (unsigned)heap_min_ever_internal(),
                                   (unsigned long)(now - boot_ms),
                                   (unsigned long)idle,
                                   feat);

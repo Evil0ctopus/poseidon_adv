@@ -476,9 +476,8 @@ static wp_verdict_t run_probe(const wp_target_t &t)
 /* --- Logging ----------------------------------------------------------- */
 static void log_verdict(const wp_target_t &t, wp_verdict_t v)
 {
-    if (!sd_mount()) return;
-    SD.mkdir("/poseidon");
-    File f = SD.open("/poseidon/whisperpair.csv", FILE_APPEND);
+    if (!sd_ensure_layout()) return;
+    File f = SD.open(SD_WHISPERPAIR_PATH, FILE_APPEND);
     if (!f) return;
     const char *v_str = (v == WP_VULNERABLE)   ? "VULNERABLE"
                       : (v == WP_PATCHED)      ? "PATCHED"
@@ -681,7 +680,7 @@ static void draw_verdict(const wp_target_t &t, wp_verdict_t v)
     }
     d.setTextColor(T_DIM, T_BG);
     d.setCursor(4, BODY_Y + 72);
-    d.print("logged to /poseidon/whisperpair.csv");
+    d.print("logged to captures/ble/");
 }
 
 /* --- Entry point ------------------------------------------------------- */

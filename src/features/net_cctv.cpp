@@ -4,7 +4,7 @@
  * Credit: architecture + probe set ported from @7h30th3r0n3's
  * Evil-M5Project (Evil-Cardputer-v1-5-2.ino `scanCCTVCameras()` block)
  * and RaspyJack (`payloads/reconnaissance/cctv_scanner.py`). Their SD
- * layout (`/evil/CCTV/`) is preserved as `/poseidon/cctv-*.csv` so
+ * layout (`/evil/CCTV/`) is preserved under `/poseidon/captures/surveillance/` so
  * downstream tooling can still consume the output.
  *
  * What it does on each target IP:
@@ -18,7 +18,7 @@
  *      probe, then `DESCRIBE` against a shortlist of vendor-common
  *      stream paths (/Streaming/Channels/1, /cam/realmonitor, /live
  *      etc). First 200 = confirmed stream URL.
- *   5. Write hit to `/poseidon/cctv-<ts>.csv` and stream a scrolling
+ *   5. Write hit to `/poseidon/captures/surveillance/cctv-<ts>.csv` and stream a scrolling
  *      hit list on-screen. ESC bails out at any time.
  *
  * Three entry modes mirror Evil-M5:
@@ -26,14 +26,16 @@
  *   - Single IP:   user types one IP.
  *   - From file:   reads `/poseidon/cctv-targets.txt`, one IP per line.
  *
- * Deliberately NOT included (yet):
- *   - WS-Discovery UDP 3702 multicast probe (Evil-M5 lists the port
- *     but doesn't actually send the SOAP envelope). Easy follow-up.
+ * Discovery begins with a bounded ONVIF WS-Discovery probe on UDP 3702.
+ * ProbeMatches seed the candidate list and preserve their device-service
+ * XAddr, then the TCP sweep fills in ports, vendor evidence and RTSP paths.
+ *
+ * Deliberately NOT included:
  *   - Hikvision CVE-2017-7921 / CVE-2021-36260 payloads.
  *   - Dahua CVE-2021-33044/45.
  *   - On-device MJPEG viewer (display-heavy; separate feature).
  *
- * Output columns (CSV): ip,open_ports,brand,creds,stream_url,notes
+ * Output columns (CSV): ip,open_ports,brand,creds,endpoint
  */
 #include "app.h"
 #include "../theme.h"
@@ -44,6 +46,7 @@
 #include <esp_wifi.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <WiFiUdp.h>
 #include <esp_netif.h>
 #include <SD.h>
 #include "../sd_helper.h"
@@ -52,8 +55,14 @@
 
 /* ---- probe tables (PROGMEM-ish; the compiler'll put them in flash) ---- */
 
-static const uint16_t CAM_PORTS[] = { 80, 554, 8080, 8081, 8082, 8083, 8554, 443, 8443 };
+/* Primary ports are probed on every address. Secondary ports are checked only
+ * after a host answers on a primary port, which cuts dead-host socket churn by
+ * more than half. HTTPS-only 443/8443 are intentionally omitted: this scanner
+ * has no TLS client, so treating them as plaintext HTTP produced connection
+ * resets and false camera hits without yielding a usable fingerprint. */
+static const uint16_t CAM_PORTS[] = { 80, 554, 8080, 8554, 8081, 8082, 8083 };
 static const int CAM_PORTS_N = sizeof(CAM_PORTS) / sizeof(CAM_PORTS[0]);
+static const int CAM_PRIMARY_PORTS_N = 4;
 
 static const char *RTSP_PATHS[] = {
     "/Streaming/Channels/1",
@@ -123,9 +132,107 @@ static volatile bool s_abort = false;
 
 /* ---- small helpers ---- */
 
+static void format_ip(IPAddress ip, char *out, size_t out_size)
+{
+    snprintf(out, out_size, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+}
+
 static void hit_add(const cctv_hit_t &h)
 {
+    for (int i = 0; i < s_hits_n; ++i) {
+        if (strcmp(s_hits[i].ip, h.ip) != 0) continue;
+        s_hits[i].ports_mask |= h.ports_mask;
+        if ((!s_hits[i].brand[0] || strcmp(s_hits[i].brand, "unknown") == 0)
+            && h.brand[0]) {
+            strncpy(s_hits[i].brand, h.brand, sizeof(s_hits[i].brand) - 1);
+        }
+        if (h.creds[0]) strncpy(s_hits[i].creds, h.creds, sizeof(s_hits[i].creds) - 1);
+        if (h.stream[0]) strncpy(s_hits[i].stream, h.stream, sizeof(s_hits[i].stream) - 1);
+        return;
+    }
     if (s_hits_n < CCTV_MAX_HITS) s_hits[s_hits_n++] = h;
+}
+
+static const char *onvif_brand(const char *xml)
+{
+    if (strcasestr(xml, "hikvision")) return "hikvision";
+    if (strcasestr(xml, "dahua"))     return "dahua";
+    if (strcasestr(xml, "axis"))      return "axis";
+    if (strcasestr(xml, "vivotek"))   return "vivotek";
+    if (strcasestr(xml, "panasonic")) return "panasonic";
+    if (strcasestr(xml, "reolink"))   return "reolink";
+    if (strcasestr(xml, "amcrest"))   return "amcrest";
+    return "onvif";
+}
+
+static void extract_onvif_xaddr(const char *xml, char *out, size_t out_size)
+{
+    out[0] = '\0';
+    const char *tag = strstr(xml, "XAddrs>");
+    if (!tag) return;
+    const char *value = tag + 7;
+    while (*value == ' ' || *value == '\t') ++value;
+    size_t length = 0;
+    while (value[length] && value[length] != '<'
+           && value[length] != ' ' && value[length] != '\r'
+           && value[length] != '\n' && length + 1 < out_size) {
+        out[length] = value[length];
+        length++;
+    }
+    out[length] = '\0';
+}
+
+static void onvif_discover(void)
+{
+    static const char *probe =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\" "
+        "xmlns:w=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" "
+        "xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" "
+        "xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\">"
+        "<e:Header><w:MessageID>uuid:poseidon-cctv</w:MessageID>"
+        "<w:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>"
+        "<w:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action>"
+        "</e:Header><e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types>"
+        "</d:Probe></e:Body></e:Envelope>";
+
+    WiFiUDP udp;
+    if (!udp.begin(3702)) {
+        Serial.println("[cctv] ONVIF UDP bind failed");
+        return;
+    }
+    IPAddress multicast(239, 255, 255, 250);
+    for (int burst = 0; burst < 3; ++burst) {
+        udp.beginPacket(multicast, 3702);
+        udp.write((const uint8_t *)probe, strlen(probe));
+        udp.endPacket();
+        delay(150);
+    }
+
+    uint32_t deadline = millis() + 3500;
+    char response[1400];
+    while (millis() < deadline && !s_abort) {
+        int packet_size = udp.parsePacket();
+        if (packet_size <= 0) {
+            ui_scanning_indicator("ONVIF discovery", s_hits_n);
+            if (input_poll() == PK_ESC) s_abort = true;
+            delay(5);
+            continue;
+        }
+        int length = udp.read((uint8_t *)response, sizeof(response) - 1);
+        if (length <= 0) continue;
+        response[length] = '\0';
+        if (!strstr(response, "ProbeMatch")) continue;
+
+        cctv_hit_t hit = {};
+        format_ip(udp.remoteIP(), hit.ip, sizeof(hit.ip));
+        strncpy(hit.brand, onvif_brand(response), sizeof(hit.brand) - 1);
+        extract_onvif_xaddr(response, hit.stream, sizeof(hit.stream));
+        hit_add(hit);
+        Serial.printf("[cctv] ONVIF ip=%s brand=%s endpoint=%s\n",
+                      hit.ip, hit.brand, hit.stream[0] ? hit.stream : "-");
+    }
+    udp.stop();
 }
 
 /* Basic auth header: "Authorization: Basic <base64(user:pass)>". Bounded
@@ -152,12 +259,23 @@ static bool build_basic_auth(const char *user, const char *pass, char *out, size
 /* Fingerprint a brand from an HTTP response body. */
 static const char *brand_of(const String &body, const String &headers)
 {
-    String combined = headers;
-    combined += body;
     for (int i = 0; i < BRAND_N; ++i) {
-        if (combined.indexOf(BRAND_SIGS[i].needle) >= 0) return BRAND_SIGS[i].brand;
+        if (headers.indexOf(BRAND_SIGS[i].needle) >= 0
+            || body.indexOf(BRAND_SIGS[i].needle) >= 0)
+            return BRAND_SIGS[i].brand;
     }
     return "generic";
+}
+
+static bool looks_like_camera_page(const String &body, const String &headers)
+{
+    static const char *markers[] = {
+        "camera", "Camera", "webcam", "Webcam", "IPCam", "ipcam",
+        "ONVIF", "onvif", "NVR", "DVR", "rtsp", "RTSP",
+    };
+    for (const char *marker : markers)
+        if (headers.indexOf(marker) >= 0 || body.indexOf(marker) >= 0) return true;
+    return false;
 }
 
 /* ---- HTTP probe ---- */
@@ -220,16 +338,20 @@ static bool rtsp_options(IPAddress ip, uint16_t port)
     if (!c.connect(ip, port, 2000)) return false;
     c.print("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: poseidon\r\n\r\n");
     uint32_t deadline = millis() + 1500;
-    String line;
+    char line[64];
+    size_t line_len = 0;
     while (c.connected() && millis() < deadline) {
         if (c.available()) {
-            line = c.readStringUntil('\n');
-            c.stop();
-            /* Many embedded RTSP servers return 404 to OPTIONS * even
-             * though the service is alive and accepts DESCRIBE on a stream
-             * path. Treat any RTSP status line as proof of an RTSP service;
-             * the path probe below decides whether a stream is available. */
-            return line.startsWith("RTSP/");
+            int value = c.read();
+            if (value == '\n' || line_len + 1 >= sizeof(line)) {
+                line[line_len] = '\0';
+                c.stop();
+                /* Any RTSP status proves the service is alive; DESCRIBE
+                 * below decides whether a known stream path is usable. */
+                return strncmp(line, "RTSP/", 5) == 0;
+            }
+            if (value >= 0 && value != '\r') line[line_len++] = (char)value;
+            continue;
         }
         delay(5);
     }
@@ -243,23 +365,32 @@ static bool rtsp_describe(IPAddress ip, uint16_t port, const char *path,
     WiFiClient c;
     c.setTimeout(2);
     if (!c.connect(ip, port, 2000)) return false;
+    char ip_text[16];
+    format_ip(ip, ip_text, sizeof(ip_text));
     char url[128];
-    snprintf(url, sizeof(url), "rtsp://%s:%u%s", ip.toString().c_str(), port, path);
+    snprintf(url, sizeof(url), "rtsp://%s:%u%s", ip_text, port, path);
     c.printf("DESCRIBE %s RTSP/1.0\r\n", url);
     c.print("CSeq: 2\r\nUser-Agent: poseidon\r\n");
     c.print("Accept: application/sdp\r\n\r\n");
 
     uint32_t deadline = millis() + 1500;
     bool ok = false;
+    char line[64];
+    size_t line_len = 0;
     while (c.connected() && millis() < deadline) {
         if (c.available()) {
-            String line = c.readStringUntil('\n');
-            if (line.startsWith("RTSP/")) {
-                int sp = line.indexOf(' ');
-                int code = sp > 0 ? line.substring(sp + 1, sp + 4).toInt() : 0;
-                ok = (code >= 200 && code < 300);
-                break;
+            int value = c.read();
+            if (value != '\n' && line_len + 1 < sizeof(line)) {
+                if (value >= 0 && value != '\r') line[line_len++] = (char)value;
+                continue;
             }
+            line[line_len] = '\0';
+            if (strncmp(line, "RTSP/", 5) == 0) {
+                const char *space = strchr(line, ' ');
+                int code = space ? atoi(space + 1) : 0;
+                ok = code >= 200 && code < 300;
+            }
+            break;
         }
         delay(5);
     }
@@ -278,11 +409,12 @@ static void scan_host(IPAddress ip)
     if (s_abort) return;
 
     cctv_hit_t h = {};
-    strncpy(h.ip, ip.toString().c_str(), sizeof(h.ip) - 1);
+    format_ip(ip, h.ip, sizeof(h.ip));
     bool any_open = false;
 
-    /* 1. Port probe (stop early once we find enough). */
-    for (int i = 0; i < CAM_PORTS_N && !s_abort; ++i) {
+    /* 1. Probe common camera ports on every host. */
+    for (int i = 0; i < CAM_PRIMARY_PORTS_N && !s_abort; ++i) {
+        if (input_poll() == PK_ESC) { s_abort = true; break; }
         if (net_tcp_open(ip, CAM_PORTS[i], 350)) {
             h.ports_mask |= (1u << i);
             any_open = true;
@@ -290,12 +422,21 @@ static void scan_host(IPAddress ip)
     }
     if (!any_open) return;
 
+    /* A live candidate earns the less-common alternate HTTP probes. */
+    for (int i = CAM_PRIMARY_PORTS_N; i < CAM_PORTS_N && !s_abort; ++i) {
+        if (input_poll() == PK_ESC) { s_abort = true; break; }
+        if (net_tcp_open(ip, CAM_PORTS[i], 350)) h.ports_mask |= (1u << i);
+    }
+
+    bool camera_evidence = false;
+    bool has_rtsp_port = (h.ports_mask & (1u << 1)) || (h.ports_mask & (1u << 3));
+
     /* 2. HTTP fingerprint on whichever HTTP port is open. */
     uint16_t http_port = 0;
     for (int i = 0; i < CAM_PORTS_N; ++i) {
         uint16_t p = CAM_PORTS[i];
         if (!(h.ports_mask & (1u << i))) continue;
-        if (p == 80 || p == 8080 || p == 8081 || p == 8082 || p == 8083 || p == 8443 || p == 443) {
+        if (p == 80 || p == 8080 || p == 8081 || p == 8082 || p == 8083) {
             http_port = p; break;
         }
     }
@@ -303,7 +444,9 @@ static void scan_host(IPAddress ip)
         http_result_t r;
         if (http_get(ip, http_port, "/", nullptr, r, 1500)) {
             strncpy(h.brand, brand_of(r.body, r.headers), sizeof(h.brand) - 1);
-            if (r.code == 401) {
+            camera_evidence = strcmp(h.brand, "generic") != 0
+                           || looks_like_camera_page(r.body, r.headers);
+            if (r.code == 401 && (camera_evidence || has_rtsp_port)) {
                 int ci = try_creds(ip, http_port, "/");
                 if (ci >= 0) {
                     snprintf(h.creds, sizeof(h.creds), "%s:%s",
@@ -322,37 +465,50 @@ static void scan_host(IPAddress ip)
         if (p == 554 || p == 8554) { rtsp_port = p; break; }
     }
     if (rtsp_port && rtsp_options(ip, rtsp_port)) {
+        camera_evidence = true;
         for (int i = 0; i < RTSP_PATHS_N && !h.stream[0] && !s_abort; ++i) {
+            if (input_poll() == PK_ESC) { s_abort = true; break; }
             rtsp_describe(ip, rtsp_port, RTSP_PATHS[i], h.stream, sizeof(h.stream));
         }
     }
 
+    if (!camera_evidence || s_abort) return;
     hit_add(h);
+    Serial.printf("[cctv] hit ip=%s ports=0x%04X brand=%s stream=%s\n",
+                  h.ip, h.ports_mask, h.brand, h.stream[0] ? "yes" : "no");
 }
 
 /* ---- SD output ---- */
 
 static char s_log_path[64];
-static File s_log;
 
 static void open_log(void)
 {
-    s_log = sdlog_open("cctv",
-                       "ip,ports_mask,brand,creds,stream",
-                       s_log_path, sizeof(s_log_path));
+    File log = sdlog_open_in(SD_SURVEILLANCE_DIR, "cctv",
+                             "ip,ports_mask,brand,creds,endpoint",
+                             s_log_path, sizeof(s_log_path));
+    if (log) log.close();
 }
 
 static void log_hit(const cctv_hit_t &h)
 {
-    if (!s_log) return;
-    s_log.printf("%s,0x%04x,%s,%s,%s\n",
-                 h.ip, h.ports_mask, h.brand, h.creds, h.stream);
-    s_log.flush();
+    if (!s_log_path[0]) return;
+    File log = SD.open(s_log_path, FILE_APPEND);
+    if (!log) return;
+    log.printf("%s,0x%04x,%s,%s,%s\n",
+               h.ip, h.ports_mask, h.brand, h.creds, h.stream);
+    log.close();
 }
 
 static void close_log(void)
 {
-    if (s_log) s_log.close();
+    /* Logs are opened only around individual writes to keep FATFS buffers
+     * out of the heap during the long socket-heavy subnet sweep. */
+}
+
+static void log_all_hits(void)
+{
+    for (int i = 0; i < s_hits_n; ++i) log_hit(s_hits[i]);
 }
 
 /* ---- UI ---- */
@@ -472,22 +628,36 @@ static void scan_lan(void)
     char cur[16] = "";
 
     draw_cctv_chrome();
+    draw_progress(0, total, s_hits_n, "ONVIF discovery", "multicast");
+    onvif_discover();
     for (int host = 1; host <= 254 && !s_abort; ++host) {
+        if ((host & 15) == 0) {
+            size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+            size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+            Serial.printf("[cctv] progress=%d/254 hits=%d free=%u largest=%u\n",
+                          host, s_hits_n, (unsigned)free_heap, (unsigned)largest);
+            if (free_heap < 20 * 1024 || largest < 12 * 1024) {
+                Serial.println("[cctv] stopping: low internal heap");
+                ui_toast("low memory - scan stopped", T_WARN, 1200);
+                s_abort = true;
+                break;
+            }
+        }
         IPAddress ip((base >> 24) & 0xFF,
                      (base >> 16) & 0xFF,
                      (base >> 8)  & 0xFF, host);
         if (ip == me) continue;   /* don't probe ourselves */
-        snprintf(cur, sizeof(cur), "%s", ip.toString().c_str());
+        format_ip(ip, cur, sizeof(cur));
         /* Redraw before each probe so the current IP is always visible. */
         draw_progress(host, total, s_hits_n, "LAN /24 sweep", cur);
-        int before = s_hits_n;
         ui_scanning_indicator("probing", s_hits_n);
         scan_host(ip);
-        if (s_hits_n > before) log_hit(s_hits[s_hits_n - 1]);
         uint16_t k = input_poll();
         if (k == PK_ESC) { s_abort = true; break; }
+        delay(2);  /* let lwIP reclaim closed sockets between hosts */
     }
 
+    log_all_hits();
     close_log();
     draw_progress(total, total, s_hits_n, "done", s_log_path);
     ui_toast(s_hits_n ? "hits saved to SD" : "no cams found",
@@ -511,7 +681,7 @@ static void scan_single(void)
     draw_progress(0, 1, 0, "single host", buf);
     ui_scanning_indicator("probing", s_hits_n);
     scan_host(ip);
-    if (s_hits_n) log_hit(s_hits[0]);
+    log_all_hits();
     close_log();
     draw_progress(1, 1, s_hits_n, "done", s_log_path);
     wait_for_exit_key();
@@ -548,16 +718,15 @@ static void scan_file(void)
         if (ip.fromString(l)) {
             snprintf(cur, sizeof(cur), "%s", l.c_str());
             draw_progress(done, total, s_hits_n, "from file", cur);
-            int before = s_hits_n;
             ui_scanning_indicator("probing", s_hits_n);
             scan_host(ip);
-            if (s_hits_n > before) log_hit(s_hits[s_hits_n - 1]);
         }
         done++;
         uint16_t k = input_poll();
         if (k == PK_ESC) { s_abort = true; break; }
     }
     f.close();
+    log_all_hits();
     close_log();
     draw_progress(total, total, s_hits_n, "done", s_log_path);
     wait_for_exit_key();

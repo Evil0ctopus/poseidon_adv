@@ -546,7 +546,8 @@ void feat_wifi_pmkid(void)
     wifi_lean_sta_init();
 
     SD.mkdir("/poseidon");
-    s_out = SD.open("/poseidon/hashcat.22000", FILE_APPEND);
+    sd_ensure_layout();
+    s_out = SD.open(SD_HASHCAT_PATH, FILE_APPEND);
     if (!s_out) { ui_toast("cant open file", T_BAD, 1500); return; }
 
     s_pmkids = 0;
@@ -599,7 +600,7 @@ void feat_wifi_pmkid(void)
      * overwritten per-tick via ui_text_w, each gated on its own last_*
      * so an unchanged row never repaints (no whole-block wipe flash). */
     d.setTextColor(T_DIM, T_BG);
-    d.setCursor(4, BODY_Y + 92); d.print("/poseidon/hashcat.22000");
+    d.setCursor(4, BODY_Y + 92); d.print("captures/wifi/hashcat.22000");
 
     uint32_t last = 0;
     uint8_t  last_ch     = 0xFF;

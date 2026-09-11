@@ -154,7 +154,7 @@ void feat_nrf52_wifi_ble_combo(void)
     ui_draw_footer("ESC=stop S=save");
 
     /* Open log file */
-    File log_file = sdlog_open("combo_ble", "ts,type,data");
+    File log_file = sdlog_open_in(SD_BLE_CAPTURE_DIR, "combo_ble", "ts,type,data");
     uint32_t ble_pkts = 0;
     uint32_t prov_found = 0;
     last_draw = 0;

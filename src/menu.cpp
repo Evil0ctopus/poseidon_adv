@@ -238,7 +238,7 @@ static const menu_node_t MENU_WIFI[] = {
       "Captive portal with DNS hijack. 16 templates: Google, Facebook, "
       "Microsoft, Free WiFi, Apple ID, Office 365, LinkedIn, Amazon, Netflix, "
       "Instagram, Hotel, Starbucks, Airport, Router Admin, Zoom, Company SSO. "
-      "Logs creds to /poseidon/creds.log on SD. NOTE: brings up the AP via "
+      "Logs creds to /poseidon/credentials/creds.log on SD. NOTE: brings up the AP via "
       "raw IDF (Bruce libs crash WiFi.softAP), which releases the BTDM heap "
       "one-way -- BLE features will be dead until reboot." },
     { 'i', "Evil Twin", "Clone AP + portal + auto-deauth chain", nullptr, feat_evil_twin,
@@ -247,7 +247,7 @@ static const menu_node_t MENU_WIFI[] = {
       "target BSSID on its channel) then 25s PORTAL (raw AP mode beaconing "
       "the target SSID + DNS hijack + Free WiFi captive page) repeating "
       "until ESC. Kicked clients re-associate to the rogue, hit the portal, "
-      "leak creds to /poseidon/creds.log. Concurrent APSTA is fragile on "
+      "leak creds to /poseidon/credentials/creds.log. Concurrent APSTA is fragile on "
       "Bruce libs -- time-slicing is the only stable path. PMF/WPA3 targets "
       "won't be kicked (deauth dropped) but the portal still works for any "
       "client that joins. 5G targets unsupported (S3 is 2.4 GHz only). "
@@ -289,7 +289,7 @@ static const menu_node_t MENU_WIFI[] = {
       "deauth (Spacehuhn/deauther.cc signature), evil twin (dup SSID/diff BSSID), "
       "beacon spam, WiFi Karma (probe-resp w/o beacon), BLE spoof (dup name/diff "
       "MAC), BLE flood. Time-slices WiFi promisc + NimBLE scan. Alerts → "
-      "/poseidon/defmon-<ts>.jsonl with GPS coords. Audio cue on each new class." },
+      "/poseidon/captures/defmon/ with GPS coords. Audio cue on each new class." },
     { 'u', "Cable Guard", "Detect malicious USB cable/charger RF implants", nullptr, feat_usb_guard,
       "Two-phase RF delta scan. Baseline 2.4 GHz APs with the suspect cable "
       "UNPLUGGED, then plug it in and re-scan: any radio that switched on with "
@@ -302,7 +302,7 @@ static const menu_node_t MENU_WIFI[] = {
       "Passive 2.4 GHz channel-hop scan that fingerprints Flock Safety "
       "ALPR cameras and ShotSpotter Raven gunshot sensors by OUI + SSID "
       "patterns + wildcard-probe behavior. GPS-tagged hits stream to "
-      "/poseidon/surv-<ts>.csv (WiGLE format) and .jsonl (Plume-compatible). "
+      "/poseidon/captures/surveillance/ as WiGLE CSV + Plume JSONL. "
       "5s dedup per BSSID. Source signatures: colonelpanichacks/flock-you, "
       "zmattmanz/Plume, DeFlockJoplin research." },
     { 'z', "CIW Zeroclick", "SSID injection payload broadcast", nullptr, feat_wifi_ciw,
@@ -347,7 +347,7 @@ static const menu_node_t MENU_C5[] = {
       "cannot capture handshakes from 5 GHz networks. C5 closes that gap. Pick "
       "a 5 GHz target, C5 locks its promisc receiver to the channel + BSSID and "
       "watches for EAPOL-Key M1 frames carrying a PMKID KDE. Hits stream back "
-      "over ESP-NOW and write directly to /poseidon/hashcat.22000 in WPA*01* "
+      "over ESP-NOW and write to /poseidon/captures/wifi/hashcat.22000 in WPA*01* "
       "format for offline cracking. Pair with Deauth 5G to force clients to "
       "reconnect and cough up a fresh M1." },
     { 'n', "Nuke 5G + HS", "Deauth-all + handshake capture, 5 GHz", nullptr, feat_c5_nuke_5g,
@@ -356,7 +356,7 @@ static const menu_node_t MENU_C5[] = {
       "broadcast deauth AND starts a 5-second HS capture listening on the "
       "same channel. Clients that get kicked re-auth right into the capture "
       "window. Both handshakes (WPA*02*) and PMKIDs (WPA*01*) that land go "
-      "straight to /poseidon/hashcat.22000. Runs until ESC. Glitch splash "
+      "straight to /poseidon/captures/wifi/hashcat.22000. Runs until ESC. Glitch splash "
       "aesthetic — live target + hit counts on-screen." },
     { 0, nullptr, nullptr, nullptr, nullptr, nullptr },
 };
@@ -388,7 +388,7 @@ static const menu_node_t MENU_BLE[] = {
       "any Part-89-compliant drone in range. Live target list + JSONL log "
       "with GPS-tagged observations. Source: GhostBLE (SmonSE)." },
     { 'n', "Sniffer", "Log all BLE adv -> SD CSV", nullptr, feat_ble_sniff,
-      "Dumps every BLE advertisement to /poseidon/blesniff-ts.csv with "
+      "Dumps every BLE advertisement to /poseidon/captures/ble/ with "
       "timestamp, MAC, RSSI, name, and raw adv hex. Useful for passive "
       "reconnaissance or offline analysis." },
     { 'b', "iBeacon", "Broadcast an iBeacon", nullptr, feat_ble_beacon,
@@ -437,7 +437,7 @@ static const menu_node_t MENU_BLE[] = {
       "JBL, Jabra, Pixel Buds, Nothing, OnePlus). Classifies each as "
       "pairable or in-use, then writes a bogus Key-Based Pairing blob to "
       "the FE2C service. Response = VULNERABLE. Silent drop = PATCHED. "
-      "Verdicts logged to /poseidon/whisperpair.csv. Probe only — the "
+      "Verdicts logged to /poseidon/captures/ble/whisperpair.csv. Probe only — the "
       "ESP32-S3 has no BR/EDR radio so we never complete the bond. "
       "Credit: COSIC KU Leuven." },
     { 'q', "BlueDucky", "BLE HID inject (CVE-2023-45866, Android)", nullptr, feat_ble_blueducky,
@@ -470,7 +470,7 @@ static const menu_node_t MENU_NET_ATTACKS[] = {
       "input as commands. Displays response. Simple reverse-shell relay." },
     { 'h', "Honeypot", "Fake telnet server on :23", nullptr, feat_honeypot,
       "Starts a WiFiServer on port 23 with a fake Ubuntu login banner. Logs "
-      "all usernames, passwords, and commands to /poseidon/honeypot.log on SD." },
+      "all usernames, passwords, and commands to /poseidon/captures/wifi/honeypot.log." },
     { 'd', "Dead Drop", "Hidden AP for anonymous file drops", nullptr, feat_dead_drop,
       "Creates a hidden AP with captive portal. Connected devices get a web page "
       "for uploading files and posting anonymous notes. Stored on SD." },
@@ -498,20 +498,20 @@ static const menu_node_t MENU_NET[] = {
       "Classic pentest credential-capture trick. When DNS fails on a LAN, "
       "Windows/macOS/Linux fall back to LLMNR, NBT-NS, and mDNS — we answer "
       "every query with our IP. Targets that trust the reply send us an NTLM "
-      "auth challenge which we log to /poseidon/ntlm.log for hashcat mode 5600." },
+      "auth challenge logged to /poseidon/credentials/ntlm.log for hashcat mode 5600." },
     { 'a', "LAN Recon", "Auto sweep + portscan + banners", nullptr, feat_net_lanrecon,
       "RaspyJack-style drop-box auto recon. Once you're joined to a WiFi "
       "network, this chains: ARP sweep of the /24 to find live hosts → "
       "TCP portscan of 16 common ports per host → banner grab on HTTP/SSH/"
       "Telnet → OUI vendor lookup on every MAC → full CSV export to "
-      "/poseidon/lan.csv. Result list is scrollable; ENTER on a host shows "
+      "/poseidon/captures/wifi/lan-<ts>.csv. Result list is scrollable; ENTER shows "
       "its full port map + banner." },
     { 'u', "UPnP scan", "Discover LAN UPnP devices", nullptr, feat_net_ssdp,
       "Sends SSDP M-SEARCH to 239.255.255.250:1900 and collects responses. "
       "Fetches each device's XML description to pull friendlyName + modelName. "
       "Great for mapping internal IoT: routers, printers, smart TVs, cameras, "
-      "NAS, Sonos, Chromecasts. Saves to /poseidon/ssdp.csv." },
-    { 'v', "CCTV Toolkit", "IP camera recon: ports/brand/rtsp/creds", nullptr, feat_cctv_scan,
+      "NAS, Sonos, Chromecasts. Saves under /poseidon/captures/wifi/." },
+    { 'v', "CCTV Toolkit", "ONVIF + IP camera ports/brand/RTSP", nullptr, feat_cctv_scan,
       "Credit: @7h30th3r0n3's Evil-M5Project. Scans targets for open camera "
       "ports (80 / 554 / 8080-83 / 8443 / 8554), HTTP-fingerprints the "
       "brand (Hikvision, Dahua, Axis, Vivotek, Panasonic, CPPlus), sprays "
@@ -520,7 +520,7 @@ static const menu_node_t MENU_NET[] = {
       "OPTIONS + DESCRIBE against common vendor stream paths "
       "(/Streaming/Channels/1, /cam/realmonitor, /live, etc.). "
       "Three modes: LAN /24 sweep, single IP, or read targets from "
-      "/poseidon/cctv-targets.txt. Hits go to /poseidon/cctv-<ts>.csv "
+      "/poseidon/cctv-targets.txt. Hits go under /poseidon/captures/surveillance/ "
       "with ports mask / brand / cred / stream URL." },
     { 'x', "Attacks", "UART / TCP / honeypot / printer / SSDP", MENU_NET_ATTACKS, nullptr,
       "Offensive network features: UART shell bridge, reverse TCP tunnel, "
@@ -545,7 +545,7 @@ static const menu_node_t MENU_NET[] = {
     { 'w', "WPAD Abuse", "Proxy autoconfig NTLM capture", nullptr, feat_wpad_abuse,
       "Creates a SoftAP with DNS wildcard, serves wpad.dat pointing all "
       "traffic through our proxy, then challenges with NTLM 407 to capture "
-      "NTLMv2 hashes. Saved to /poseidon/ntlm_hashes.txt for hashcat 5600." },
+      "NTLMv2 hashes. Saved to /poseidon/credentials/ntlm_hashes.txt." },
     { 'e', "Autodiscover", "Exchange cred capture (Basic+NTLM)", nullptr, feat_autodiscover,
       "Fake Exchange Autodiscover endpoint. Offers Basic Auth first (plaintext "
       "capture on older Outlook) with NTLM fallback (NTLMv2 hash). Returns "
@@ -823,7 +823,7 @@ static const menu_node_t MENU_SUBGHZ[] = {
       "Learns the noise floor on a picked frequency for 10 seconds, then "
       "alerts on sustained spikes above baseline +15 dBm — the signature of "
       "a jammer or sustained TX in the band. Fires a red overlay + siren, "
-      "logs timestamp + peak RSSI to /poseidon/jamdetect.csv. Peer to the "
+      "logs timestamp + peak RSSI under /poseidon/captures/subghz/. Peer to the "
       "WiFi deauth detector. Use it to verify your jammer actually works "
       "or to flag hostile RF interference near a target." },
     { 0, nullptr, nullptr, nullptr, nullptr, nullptr },
@@ -1391,8 +1391,9 @@ static void run_submenu(const menu_node_t *parent)
                  * one-time negative delta -- an expected non-leak. */
                 size_t hb_base = heap_free_internal();
                 size_t hb_reclaimed = heap_reclaim_all();
-                Serial.printf("[FEAT_ENTER] %s free=%u reclaimed=%u\n",
+                Serial.printf("[FEAT_ENTER] %s free=%u largest=%u reclaimed=%u\n",
                               sel->label, (unsigned)heap_free_internal(),
+                              (unsigned)heap_largest_internal(),
                               (unsigned)hb_reclaimed);
                 g_current_feature_item = sel;
                 sel->action();
@@ -1403,8 +1404,9 @@ static void run_submenu(const menu_node_t *parent)
                 pinMode(44, OUTPUT); digitalWrite(44, HIGH);
                 { size_t hb_now = heap_free_internal();
                   long hb_d = (long)hb_now - (long)hb_base;
-                  Serial.printf("[FEAT_EXIT] %s free=%u delta=%ld%s\n",
-                      sel->label, (unsigned)hb_now, hb_d, hb_d < -2048 ? " LEAK" : ""); }
+                    Serial.printf("[FEAT_EXIT] %s free=%u largest=%u delta=%ld%s\n",
+                      sel->label, (unsigned)hb_now, (unsigned)heap_largest_internal(),
+                      hb_d, hb_d < -2048 ? " LEAK" : ""); }
                 ui_draw_status(radio_name(), "");
                 ui_draw_footer(FOOTER_HINTS);
                 s_menu_force = true;
@@ -1435,8 +1437,9 @@ static void run_submenu(const menu_node_t *parent)
                     if (ch->action) {
                         size_t hb_base = heap_free_internal();
                         size_t hb_reclaimed = heap_reclaim_all();
-                        Serial.printf("[FEAT_ENTER] %s free=%u reclaimed=%u\n",
+                        Serial.printf("[FEAT_ENTER] %s free=%u largest=%u reclaimed=%u\n",
                                       ch->label, (unsigned)heap_free_internal(),
+                                      (unsigned)heap_largest_internal(),
                                       (unsigned)hb_reclaimed);
                         g_current_feature_item = ch;
                         ch->action();
@@ -1445,8 +1448,9 @@ static void run_submenu(const menu_node_t *parent)
                         pinMode(44, OUTPUT); digitalWrite(44, HIGH);
                         { size_t hb_now = heap_free_internal();
                           long hb_d = (long)hb_now - (long)hb_base;
-                          Serial.printf("[FEAT_EXIT] %s free=%u delta=%ld%s\n",
-                              ch->label, (unsigned)hb_now, hb_d, hb_d < -2048 ? " LEAK" : ""); }
+                            Serial.printf("[FEAT_EXIT] %s free=%u largest=%u delta=%ld%s\n",
+                              ch->label, (unsigned)hb_now, (unsigned)heap_largest_internal(),
+                              hb_d, hb_d < -2048 ? " LEAK" : ""); }
                         ui_draw_status(radio_name(), "");
                         ui_draw_footer(FOOTER_HINTS);
                         s_menu_force = true;

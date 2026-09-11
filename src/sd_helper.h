@@ -6,6 +6,22 @@
  * so CC1101/nRF24 bus-parking can deselect it via one canonical macro. */
 #define SD_CS 12
 
+#define SD_POSEIDON_ROOT       "/poseidon"
+#define SD_CAPTURE_ROOT        "/poseidon/captures"
+#define SD_WARDRIVE_DIR        "/poseidon/captures/wardrive"
+#define SD_BLE_CAPTURE_DIR     "/poseidon/captures/ble"
+#define SD_SURVEILLANCE_DIR    "/poseidon/captures/surveillance"
+#define SD_DEFMON_DIR          "/poseidon/captures/defmon"
+#define SD_WIFI_CAPTURE_DIR    "/poseidon/captures/wifi"
+#define SD_SUBGHZ_CAPTURE_DIR  "/poseidon/captures/subghz"
+#define SD_CREDENTIALS_DIR     "/poseidon/credentials"
+
+#define SD_HASHCAT_PATH        SD_WIFI_CAPTURE_DIR "/hashcat.22000"
+#define SD_CREDS_PATH          SD_CREDENTIALS_DIR "/creds.log"
+#define SD_NTLM_PATH           SD_CREDENTIALS_DIR "/ntlm.log"
+#define SD_NTLM_HASHES_PATH    SD_CREDENTIALS_DIR "/ntlm_hashes.txt"
+#define SD_WHISPERPAIR_PATH    SD_BLE_CAPTURE_DIR "/whisperpair.csv"
+
 /*
  * sd_helper — one place that knows the M5Cardputer SD pins + SPI
  * bus config. Every feature that wants SD should call sd_mount()
@@ -39,6 +55,10 @@ SPIClass &sd_get_spi(void);
  * has stolen the GPIO matrix from HSPI. */
 bool sd_remount(void);
 
+/* Create the standard capture/credential directory tree. Existing files in
+ * /poseidon are deliberately left in place for backward compatibility. */
+bool sd_ensure_layout(void);
+
 #include <FS.h>
 
 /*
@@ -63,6 +83,18 @@ File sdlog_open(const char *stem,
                 const char *header_line = nullptr,
                 char *out_path = nullptr,
                 size_t out_path_sz = 0);
+
+/* Directory-aware variant for organized capture output. `directory` must be
+ * one of the standard paths above; the layout is created automatically. */
+File sdlog_open_in(const char *directory,
+                   const char *stem,
+                   const char *header_line = nullptr,
+                   char *out_path = nullptr,
+                   size_t out_path_sz = 0);
+
+/* Open the organized path first, then an old root-level path so cards from
+ * earlier firmware releases remain readable without moving their contents. */
+File sd_open_read_compat(const char *path, const char *legacy_path);
 
 /*
  * sd_rotate_on_size — net-009 / POS-AUDIT-269.

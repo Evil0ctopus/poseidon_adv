@@ -238,7 +238,8 @@ static void relay_phase(void) {
     d.print("BLE MITM RELAY ACTIVE");
     d.drawFastHLine(4, BODY_Y+12, SCR_W-8, T_BAD);
 
-    File log_file = sdlog_open("ble_mitm", "ts,dir,handle,data_hex");
+    File log_file = sdlog_open_in(SD_BLE_CAPTURE_DIR, "ble_mitm",
+                                  "ts,dir,handle,data_hex");
     uint32_t last_draw = 0;
     bool modify_mode = false;
 

@@ -158,8 +158,8 @@ void feat_net_ssdp(void)
 
     /* Save log. */
     if (sd_mount()) {
-        SD.mkdir("/poseidon");
-        File f = SD.open("/poseidon/ssdp.csv", FILE_APPEND);
+        sd_ensure_layout();
+        File f = SD.open(SD_WIFI_CAPTURE_DIR "/ssdp.csv", FILE_APPEND);
         if (f) {
             f.println("ip,friendly,model,location");
             for (int i = 0; i < s_dev_n; ++i)

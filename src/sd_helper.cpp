@@ -109,16 +109,37 @@ bool sd_mount(void)
     return false;
 }
 
+bool sd_ensure_layout(void)
+{
+    if (!sd_mount()) return false;
+    bool ok = true;
+    const char *dirs[] = {
+        SD_POSEIDON_ROOT, SD_CAPTURE_ROOT, SD_WARDRIVE_DIR,
+        SD_BLE_CAPTURE_DIR, SD_SURVEILLANCE_DIR, SD_DEFMON_DIR,
+        SD_WIFI_CAPTURE_DIR, SD_SUBGHZ_CAPTURE_DIR, SD_CREDENTIALS_DIR,
+    };
+    for (const char *dir : dirs)
+        if (!SD.exists(dir) && !SD.mkdir(dir)) ok = false;
+    return ok;
+}
+
 File sdlog_open(const char *stem, const char *header_line,
                 char *out_path, size_t out_path_sz)
 {
+    return sdlog_open_in(SD_POSEIDON_ROOT, stem, header_line,
+                         out_path, out_path_sz);
+}
+
+File sdlog_open_in(const char *directory, const char *stem,
+                   const char *header_line, char *out_path,
+                   size_t out_path_sz)
+{
     File empty;
-    if (!stem || !*stem) return empty;
-    if (!sd_mount()) return empty;
-    SD.mkdir("/poseidon");
-    char path[64];
-    snprintf(path, sizeof(path), "/poseidon/%s-%lu.csv",
-             stem, (unsigned long)(millis() / 1000));
+    if (!directory || !*directory || !stem || !*stem) return empty;
+    if (!sd_ensure_layout()) return empty;
+    char path[96];
+    snprintf(path, sizeof(path), "%s/%s-%lu.csv",
+             directory, stem, (unsigned long)(millis() / 1000));
     File f = SD.open(path, FILE_WRITE);
     if (!f) return empty;
     if (header_line && *header_line) {
@@ -128,6 +149,15 @@ File sdlog_open(const char *stem, const char *header_line,
         strncpy(out_path, path, out_path_sz - 1);
         out_path[out_path_sz - 1] = '\0';
     }
+    return f;
+}
+
+File sd_open_read_compat(const char *path, const char *legacy_path)
+{
+    File empty;
+    if (!sd_mount() || !path || !*path) return empty;
+    File f = SD.open(path, FILE_READ);
+    if (!f && legacy_path && *legacy_path) f = SD.open(legacy_path, FILE_READ);
     return f;
 }
 

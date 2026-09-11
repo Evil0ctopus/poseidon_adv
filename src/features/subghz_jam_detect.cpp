@@ -169,9 +169,8 @@ void feat_subghz_jam_detect(void)
             ui_action_overlay("JAM DETECTED", sub, ACT_BG_GLITCH, T_BAD, 1200);
 
             /* Log to SD. */
-            if (sd_mount()) {
-                SD.mkdir("/poseidon");
-                File f = SD.open("/poseidon/jamdetect.csv", FILE_APPEND);
+            if (sd_ensure_layout()) {
+                File f = SD.open(SD_SUBGHZ_CAPTURE_DIR "/jamdetect.csv", FILE_APPEND);
                 if (f) {
                     f.printf("%lu,%.3f,%d,%d,%d\n",
                              (unsigned long)(millis() / 1000),

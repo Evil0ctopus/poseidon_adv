@@ -15,7 +15,7 @@
  *
  * This scanner passively listens for those frames, decodes the
  * Basic ID + Location, and shows live target list with operator
- * location when available. SD log to /poseidon/drone-<ts>.jsonl
+ * location when available. SD log to /poseidon/captures/ble/drone-<ts>.jsonl
  * with timestamps + observed RSSI.
  *
  * Source: ASTM F3411-22a spec + GhostBLE decoder pattern (SmonSE).
@@ -231,9 +231,9 @@ void feat_drone_remoteid(void)
         return;
     }
     uint32_t ts = millis() / 1000;
+    if (!sd_ensure_layout()) { ui_toast("cant create log dir", T_BAD, 1200); return; }
     snprintf(s_log_path, sizeof(s_log_path),
-             "/poseidon/drone-%lu.jsonl", (unsigned long)ts);
-    SD.mkdir("/poseidon");
+             SD_BLE_CAPTURE_DIR "/drone-%lu.jsonl", (unsigned long)ts);
     s_log = SD.open(s_log_path, FILE_WRITE);
     if (!s_log) { ui_toast("cant open log", T_BAD, 1200); return; }
 

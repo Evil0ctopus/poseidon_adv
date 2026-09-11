@@ -5,7 +5,7 @@
  *   - GPS fix from the M5Stack LoRa-GNSS HAT (NMEA on UART1)
  *   - SD card mounted (M5Cardputer.Display.getSDCard() or sd_mount())
  *
- * Output: /poseidon/wigle-YYYYMMDD-HHMMSS.csv with the standard
+ * Output: /poseidon/captures/wardrive/wigle-YYYYMMDD-HHMMSS.csv with the standard
  * WiGLE CSV v1.6 header. Rows are deduped by BSSID — stronger RSSI
  * + latest GPS fix win.
  */
@@ -70,6 +70,7 @@ static volatile uint32_t s_last_new_ms = 0;      /* millis() of most recent new 
 static volatile bool     s_gps_ever_locked = false;
 static volatile bool     s_juicy_pending = false; /* set in RX cb, consumed in UI loop */
 static volatile uint32_t s_cache_rollovers = 0;
+static volatile int      s_last_new_idx = -1;
 
 static int find_ap(const uint8_t *bssid)
 {
@@ -77,6 +78,8 @@ static int find_ap(const uint8_t *bssid)
         if (memcmp(s_aps[i].bssid, bssid, 6) == 0) return i;
     return -1;
 }
+
+static void format_wigle_time(const gps_fix_t &g, char out[16]);
 
 /* WiGLE v1.6 header + metadata line */
 static bool wdr_open_csv(void)
@@ -87,9 +90,26 @@ static bool wdr_open_csv(void)
         g.utc[0] = '\0';
         g.date[0] = '\0';
     }
-    snprintf(s_csv_path, sizeof(s_csv_path),
-             "/poseidon/wigle-%lu.csv", (unsigned long)(millis() / 1000));
-    SD.mkdir("/poseidon");
+    if (!sd_ensure_layout()) return false;
+    char stamp[16];
+    format_wigle_time(g, stamp);
+    if (stamp[0]) {
+        snprintf(s_csv_path, sizeof(s_csv_path), SD_WARDRIVE_DIR "/wigle-%s.csv", stamp);
+    } else {
+        snprintf(s_csv_path, sizeof(s_csv_path), SD_WARDRIVE_DIR "/wigle-boot-%lu.csv",
+                 (unsigned long)(millis() / 1000));
+    }
+    if (SD.exists(s_csv_path)) {
+        char base[64];
+        strncpy(base, s_csv_path, sizeof(base) - 1);
+        base[sizeof(base) - 1] = '\0';
+        char *ext = strrchr(base, '.');
+        if (ext) *ext = '\0';
+        for (unsigned suffix = 2; suffix < 100; ++suffix) {
+            snprintf(s_csv_path, sizeof(s_csv_path), "%s-%u.csv", base, suffix);
+            if (!SD.exists(s_csv_path)) break;
+        }
+    }
     s_csv = SD.open(s_csv_path, FILE_WRITE);
     if (!s_csv) return false;
 
@@ -127,8 +147,10 @@ static void csv_escape(const char *value, char *out, size_t out_size)
     size_t pos = 0;
     if (out_size == 0) return;
     for (const char *p = value ? value : ""; *p && pos + 2 < out_size; ++p) {
-        if (*p == '"') out[pos++] = '"';
-        out[pos++] = *p;
+        uint8_t c = (uint8_t)*p;
+        if (c < 0x20 || c >= 0x7F) c = '?';
+        if (c == '"') out[pos++] = '"';
+        out[pos++] = (char)c;
     }
     out[pos] = '\0';
     if (strchr(out, ',') || strchr(out, '"')) {
@@ -167,7 +189,7 @@ static void flush_dirty_rows(void)
              * fixes. Better to drop the row entirely; the AP stays in the
              * in-RAM table for a later flush when GPS catches up. Leave
              * dirty=true so it retries on the next flush after a fix. */
-            if (a.has_gps) {
+            if (a.has_gps && a.first_seen_utc[0] != '\0') {
                 a.dirty = false;
                 snap = a;           /* copy fields to write under the lock */
                 write_row = true;
@@ -191,7 +213,7 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     if (type != WIFI_PKT_MGMT) return;
     const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
     const uint8_t *p = pkt->payload;
-    if (pkt->rx_ctrl.sig_len < 36) return;
+    if (pkt->rx_ctrl.sig_len < 40) return;
     uint8_t fc = p[0];
     uint8_t subtype = (fc >> 4) & 0xF;
     if (subtype != 0x8 && subtype != 0x5) return;
@@ -230,21 +252,18 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     a.last_seen = millis();
     s_beacons++;
 
-    /* Parse SSID from tagged parameters (offset 36 in beacon body).
-     * tag 0 = SSID. */
+    /* Parse tagged parameters after the fixed beacon body. The capture may
+     * contain no tags or a truncated final tag, so never read a tag length
+     * until both header bytes are inside the frame. */
     const uint8_t *tags = p + 36;
     int tag_len = pkt->rx_ctrl.sig_len - 36 - 4;  /* minus FCS */
-    if (tag_len >= 2 && tags[0] == 0 && tags[1] <= 32 && 2 + tags[1] <= tag_len) {
-        memcpy(a.ssid, tags + 2, tags[1]);
-        a.ssid[tags[1]] = '\0';
-    }
 
     /* Channel is current hop. */
     a.channel = s_current_ch;
 
     /* Capability bits: WEP is bit 4, plus RSN/WPA info elements for WPA/2. */
     /* Quick hack: check for RSN (48) or WPA (221) in tag list. */
-    int off = 2 + tags[1];
+    int off = 0;
     uint8_t auth = WIFI_AUTH_OPEN;
     uint16_t cap = p[34] | (p[35] << 8);
     if (cap & (1 << 4)) auth = WIFI_AUTH_WEP;
@@ -252,7 +271,10 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         uint8_t tag = tags[off];
         uint8_t tlen = tags[off + 1];
         if (off + 2 + tlen > tag_len) break;
-        if (tag == 48) {
+        if (tag == 0 && tlen <= 32) {
+            memcpy(a.ssid, tags + off + 2, tlen);
+            a.ssid[tlen] = '\0';
+        } else if (tag == 48) {
             auth = WIFI_AUTH_WPA2_PSK;
             /* Scan the RSN element for the SAE AKM suite (00-0F-AC-08) ->
              * WPA3-Personal. Transition APs list both PSK and SAE; SAE
@@ -272,6 +294,7 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     a.auth = auth;
 
     if (is_new_ap) {
+        s_last_new_idx = idx;
         s_new_this_run++;
         s_last_new_ms = millis();
         if (auth == WIFI_AUTH_OPEN || auth == WIFI_AUTH_WPA3_PSK) s_juicy_pending = true;
@@ -496,6 +519,7 @@ void feat_wifi_wardrive(void)
     s_current_ch = 1;
     s_5g_count = 0;
     s_new_this_run = 0;
+    s_last_new_idx = -1;
     s_entry_ms = millis();
 
     /* Explicit MASK_ALL filter. On IDF 5.5, NOT setting a filter (or
@@ -533,6 +557,7 @@ void feat_wifi_wardrive(void)
     int      new_5s_ref     = 0;
     uint32_t new_5s_ref_ms  = s_entry_ms;
     int      mx_prev_apc    = s_ap_count;   /* only feed the matrix view APs seen from here on */
+    int      mx_prev_new    = 0;
     bool     prev_c5        = false;
     while (true) {
         gps_poll();
@@ -592,7 +617,21 @@ void feat_wifi_wardrive(void)
                     if (juicy) sfx_glitch();
                 }
                 mx_prev_apc = apc;
+            } else if (s_new_this_run > mx_prev_new && s_last_new_idx >= 0) {
+                /* At capacity, new APs replace old slots so s_ap_count no
+                 * longer changes. Feed the most recent replacement instead
+                 * of leaving the live SSID roster frozen forever. */
+                int i = s_last_new_idx;
+                char ss[40]; uint8_t au; int8_t rs; uint8_t ch; uint8_t bb[6];
+                portENTER_CRITICAL(&s_wdr_mux);
+                strncpy(ss, s_aps[i].ssid, 33); ss[33] = 0;
+                au = s_aps[i].auth; rs = s_aps[i].rssi; ch = s_aps[i].channel;
+                memcpy(bb, s_aps[i].bssid, 6);
+                portEXIT_CRITICAL(&s_wdr_mux);
+                if (ss[0] == 0) snprintf(ss, sizeof(ss), "<hidden %02X:%02X>", bb[4], bb[5]);
+                if (s_view == WDR_VIEW_MATRIX) wdr_matrix_feed(ss, au, rs, ch);
             }
+            mx_prev_new = s_new_this_run;
 
             /* Consume the ISR juicy flag every frame so it can't go stale and
              * strobe on a later view switch; only Argus reacts to it. */

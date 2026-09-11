@@ -81,6 +81,44 @@ static bool json_bool_val(const char *buf, const char *key)
     return strstr(buf, pat) != nullptr;
 }
 
+static bool newest_wigle_path(const char *directory, char *out, size_t out_size)
+{
+    File dir = SD.open(directory);
+    if (!dir || !dir.isDirectory()) return false;
+    String best_name;
+    bool best_dated = false;
+    uint32_t best_uptime = 0;
+    File file;
+    while ((file = dir.openNextFile())) {
+        String full_name = file.name();
+        file.close();
+        int slash = full_name.lastIndexOf('/');
+        String name = slash >= 0 ? full_name.substring(slash + 1) : full_name;
+        if (!name.startsWith("wigle-") || !name.endsWith(".csv")) continue;
+
+        bool dated = name.length() > 15 && isDigit(name[6]) && name[14] == '-';
+        uint32_t uptime = 0;
+        if (!dated) {
+            int start = name.startsWith("wigle-boot-") ? 11 : 6;
+            uptime = strtoul(name.c_str() + start, nullptr, 10);
+        }
+        bool newer = best_name.isEmpty()
+                  || (dated && !best_dated)
+                  || (dated == best_dated
+                      && (dated ? strcmp(name.c_str(), best_name.c_str()) > 0
+                                : uptime > best_uptime));
+        if (newer) {
+            best_name = name;
+            best_dated = dated;
+            best_uptime = uptime;
+        }
+    }
+    dir.close();
+    if (best_name.isEmpty()) return false;
+    snprintf(out, out_size, "%s/%s", directory, best_name.c_str());
+    return true;
+}
+
 static void handle_line(const char *line)
 {
     char cmd[16];
@@ -114,37 +152,32 @@ static void handle_line(const char *line)
          * row, plus a trailing loot_end so the PC knows when to stop. */
         char which[16] = {0};
         json_val(line, "which", which, sizeof(which));
-        const char *path = "/poseidon/creds.log";
-        if (!strcmp(which, "ntlm")) path = "/poseidon/ntlm_hashes.txt";
-        else if (!strcmp(which, "responder")) path = "/poseidon/ntlm.log";
-        else if (!strcmp(which, "whisperpair")) path = "/poseidon/whisperpair.csv";
-        else if (!strcmp(which, "wigle")) {
-            /* Wigle CSVs are timestamped — stream the freshest. */
-            File dir = SD.open("/poseidon");
-            String newest; uint32_t newest_ts = 0;
-            if (dir) {
-                File f;
-                while ((f = dir.openNextFile())) {
-                    String n = f.name();
-                    if (n.startsWith("wigle-") && n.endsWith(".csv")) {
-                        uint32_t ts = strtoul(n.substring(6).c_str(), nullptr, 10);
-                        if (ts > newest_ts) { newest_ts = ts; newest = "/poseidon/" + n; }
-                    }
-                    f.close();
-                }
-                dir.close();
-            }
-            if (newest.length()) {
-                static char buf[64];
-                strncpy(buf, newest.c_str(), sizeof(buf) - 1);
-                buf[sizeof(buf) - 1] = '\0';
-                path = buf;
-            }
+        const char *path = SD_CREDS_PATH;
+        const char *legacy_path = "/poseidon/creds.log";
+        static char wigle_path[96];
+        if (!strcmp(which, "ntlm")) {
+            path = SD_NTLM_HASHES_PATH;
+            legacy_path = "/poseidon/ntlm_hashes.txt";
+        } else if (!strcmp(which, "responder")) {
+            path = SD_NTLM_PATH;
+            legacy_path = "/poseidon/ntlm.log";
+        } else if (!strcmp(which, "whisperpair")) {
+            path = SD_WHISPERPAIR_PATH;
+            legacy_path = "/poseidon/whisperpair.csv";
         }
         if (!sd_mount()) {
             Serial.println("{\"evt\":\"loot_err\",\"reason\":\"no_sd\"}");
         } else {
-            File f = SD.open(path, FILE_READ);
+            if (!strcmp(which, "wigle")) {
+                if (newest_wigle_path(SD_WARDRIVE_DIR, wigle_path, sizeof(wigle_path))) {
+                    path = wigle_path;
+                    legacy_path = nullptr;
+                } else if (newest_wigle_path(SD_POSEIDON_ROOT, wigle_path, sizeof(wigle_path))) {
+                    path = wigle_path;
+                    legacy_path = nullptr;
+                }
+            }
+            File f = sd_open_read_compat(path, legacy_path);
             if (!f) {
                 Serial.printf("{\"evt\":\"loot_err\",\"reason\":\"open\",\"path\":\"%s\"}\n", path);
             } else {

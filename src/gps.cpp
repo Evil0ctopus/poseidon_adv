@@ -8,6 +8,8 @@
 #include <Preferences.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <sys/time.h>
+#include <time.h>
 
 static HardwareSerial s_uart(1);
 static gps_fix_t s_fix = {};
@@ -270,6 +272,24 @@ static void parse_rmc(char *line)
     fix.speed_kts  = (float)atof(f[7]);
     fix.course_deg = (float)atof(f[8]);
     strncpy(fix.date, f[9], sizeof(fix.date) - 1);
+    /* Seed the ESP system clock from GPS UTC so FAT timestamps and future
+     * capture filenames are meaningful even when WiFi/NTP is unavailable. */
+    if (strlen(f[1]) >= 6 && strlen(f[9]) == 6) {
+        struct tm utc = {};
+        utc.tm_hour = (f[1][0] - '0') * 10 + (f[1][1] - '0');
+        utc.tm_min  = (f[1][2] - '0') * 10 + (f[1][3] - '0');
+        utc.tm_sec  = (f[1][4] - '0') * 10 + (f[1][5] - '0');
+        utc.tm_mday = (f[9][0] - '0') * 10 + (f[9][1] - '0');
+        utc.tm_mon  = (f[9][2] - '0') * 10 + (f[9][3] - '0') - 1;
+        utc.tm_year = 100 + (f[9][4] - '0') * 10 + (f[9][5] - '0');
+        setenv("TZ", "UTC0", 1);
+        tzset();
+        time_t epoch = mktime(&utc);
+        if (epoch > 1577836800) {
+            struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+            settimeofday(&tv, nullptr);
+        }
+    }
     /* Do NOT set s_fix.valid here. RMC's "A" status only means the
      * GPS module's NMEA layer is happy, not that we have a 3D fix —
      * a 2D fix can report 'A' while GGA reports fix-quality=0. The

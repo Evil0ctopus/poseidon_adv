@@ -11,7 +11,7 @@
  *                        second exceeds threshold (Cardputer-Adv et al
  *                        beacon-spam tools fire >50 fake APs/sec)
  *
- * Alerts stream to /poseidon/defmon-<ts>.jsonl with GPS coords and
+ * Alerts stream to /poseidon/captures/defmon/defmon-<ts>.jsonl with GPS coords and
  * fire an audio cue. The live screen shows class counters + the most
  * recent alert.
  *
@@ -537,9 +537,9 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 static bool open_log(void)
 {
     uint32_t ts = millis() / 1000;
+    if (!sd_ensure_layout()) return false;
     snprintf(s_log_path, sizeof(s_log_path),
-             "/poseidon/defmon-%lu.jsonl", (unsigned long)ts);
-    SD.mkdir("/poseidon");
+             SD_DEFMON_DIR "/defmon-%lu.jsonl", (unsigned long)ts);
     s_log = SD.open(s_log_path, FILE_WRITE);
     return s_log ? true : false;
 }
@@ -648,15 +648,15 @@ static void enter_wifi_phase(void)
     esp_wifi_set_channel(s_current_ch, WIFI_SECOND_CHAN_NONE);
 }
 
-static void enter_ble_phase(void)
+static bool enter_ble_phase(void)
 {
     s_phase = DM_PHASE_BLE;
     s_phase_start_ms = millis();
     esp_wifi_set_promiscuous(false);
     delay(60);
-    radio_switch(RADIO_BLE);
+    if (!radio_switch(RADIO_BLE)) return false;
     if (!NimBLEDevice::isInitialized()) {
-        NimBLEDevice::init("");
+        if (!NimBLEDevice::init("")) return false;
         NimBLEDevice::setPower(ESP_PWR_LVL_P9);
     }
     NimBLEScan *scan = NimBLEDevice::getScan();
@@ -671,6 +671,7 @@ static void enter_ble_phase(void)
     scan->setWindow(67);
     scan->setDuplicateFilter(false);
     scan->start(DM_PHASE_BLE_MS / 1000, false, false);
+    return true;
 }
 
 void feat_defensive_monitor(void)
@@ -720,14 +721,14 @@ void feat_defensive_monitor(void)
         uint32_t phase_dur = (s_phase == DM_PHASE_WIFI) ? DM_PHASE_WIFI_MS : DM_PHASE_BLE_MS;
         if (now - s_phase_start_ms > phase_dur) {
             if (s_phase == DM_PHASE_WIFI) {
-                /* Only flip to BLE if NimBLE can actually re-init — see
-                 * DM_BLE_MIN_BLOCK. A fragmented heap here is what was
-                 * resetting the device on the WiFi->BLE flip. */
-                if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) > DM_BLE_MIN_BLOCK) {
-                    enter_ble_phase();
-                } else {
-                    Serial.println("[defmon] heap too fragmented for NimBLE; staying WiFi-only");
-                    s_phase_start_ms = now;   /* skip BLE this cycle, keep WiFi */
+                /* radio_switch releases WiFi's retained buffers before BLE
+                 * initializes. Checking the heap before that teardown made
+                 * every healthy WiFi phase look too fragmented and silently
+                 * disabled BLE monitoring. Recover to WiFi only on a real
+                 * NimBLE initialization failure. */
+                if (!enter_ble_phase()) {
+                    Serial.println("[defmon] NimBLE init failed; returning to WiFi");
+                    enter_wifi_phase();
                 }
             } else {
                 enter_wifi_phase();
@@ -752,7 +753,7 @@ void feat_defensive_monitor(void)
             }
             d.setTextColor(T_DIM, T_BG);
             d.setCursor(4, BODY_Y + 18);
-            d.printf("phase: %-4s wifi=%lu ble=%lu",
+            d.printf("phase:%-4s pkt w=%lu b=%lu",
                      s_phase == DM_PHASE_WIFI ? "WIFI" : "BLE",
                      (unsigned long)s_total, (unsigned long)s_ble_total);
 

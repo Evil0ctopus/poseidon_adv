@@ -385,7 +385,8 @@ void feat_honeypot(void)
     };
 
     /* SD log file. */
-    File logf = SD.open("/poseidon/honeypot.log", FILE_APPEND);
+    sd_ensure_layout();
+    File logf = SD.open(SD_WIFI_CAPTURE_DIR "/honeypot.log", FILE_APPEND);
 
     auto sd_log = [&](const String &ip, const String &msg) {
         if (logf) {

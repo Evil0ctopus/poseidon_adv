@@ -7,7 +7,7 @@
  *   3. Banner grab / HTTP title extraction where possible
  *   4. OUI vendor lookup on MAC addresses (ble_db OUI table)
  *   5. Default-credential probe on HTTP basic-auth + common login pages
- *   6. Full CSV export to /poseidon/lan.csv for reporting
+ *   6. Full CSV export to /poseidon/captures/wifi/ for reporting
  *
  * Drop box mode: the whole chain runs autonomously once you launch it.
  * Status screen shows live progress. Results list is scrollable after.
@@ -263,7 +263,8 @@ static void export_csv(void)
      * which truncates — every recon run silently obliterated the previous
      * one. Use the canonical sdlog_open helper instead which gives every
      * run its own timestamped file (matches net_cctv pattern). */
-    File f = sdlog_open("lan", "ip,mac,vendor,open_ports,banner");
+    File f = sdlog_open_in(SD_WIFI_CAPTURE_DIR, "lan",
+                           "ip,mac,vendor,open_ports,banner");
     if (!f) return;
     for (int i = 0; i < s_host_count; ++i) {
         const host_t &h = s_hosts[i];
@@ -291,7 +292,7 @@ static void draw_results(int cursor)
     d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
     d.setTextColor(T_DIM, T_BG);
     d.setCursor(SCR_W - 80, BODY_Y + 2);
-    d.print("/poseidon/lan.csv");
+    d.print("captures/wifi/lan-*.csv");
 
     if (s_host_count == 0) {
         d.setTextColor(T_DIM, T_BG);

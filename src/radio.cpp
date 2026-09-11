@@ -222,6 +222,7 @@ bool radio_switch(radio_domain_t target)
             Serial.printf("[radio] NimBLEDevice::init() -> %d bt_ctrl_status=%d\n",
                           (int)ok, (int)esp_bt_controller_get_status());
             Serial.flush();
+            if (!ok) return false;
         } else {
             Serial.println("[radio] NimBLE already initialized"); Serial.flush();
         }

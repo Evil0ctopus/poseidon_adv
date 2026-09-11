@@ -22,6 +22,8 @@ int net_http_get(IPAddress ip, uint16_t port, const char *path,
 {
     if (out_body)    *out_body    = "";
     if (out_headers) *out_headers = "";
+    if (out_body)    out_body->reserve(512);
+    if (out_headers) out_headers->reserve(512);
 
     WiFiClient c;
     if (!c.connect(ip, port, timeout_ms)) return 0;

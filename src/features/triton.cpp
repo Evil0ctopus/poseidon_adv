@@ -335,7 +335,7 @@ static void wdr_flush(void)
         portEXIT_CRITICAL(&s_wdr_mux);
         if (!have) break;
         if (!s_wdr_file) {
-            s_wdr_file = sdlog_open("triton-wardrive",
+            s_wdr_file = sdlog_open_in(SD_WARDRIVE_DIR, "triton-wardrive",
                 "MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,"
                 "CurrentLatitude,CurrentLongitude,AltitudeMeters,"
                 "AccuracyMeters,Type", nullptr, 0);
@@ -1112,7 +1112,8 @@ void feat_triton(void)
     TRITON_RAM_PROBE("after sd_mount");
     ui_radar(SCR_W - 24, BODY_Y + 28, 10, T_ACCENT);  /* advance sweep */
     SD.mkdir("/poseidon");
-    s_file = SD.open("/poseidon/hashcat.22000", FILE_APPEND);
+    sd_ensure_layout();
+    s_file = SD.open(SD_HASHCAT_PATH, FILE_APPEND);
     if (!s_file) { ui_toast("file open fail", T_BAD, 1500); return; }
     ui_radar(SCR_W - 24, BODY_Y + 28, 10, T_ACCENT);  /* advance sweep */
 

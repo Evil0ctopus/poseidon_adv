@@ -239,7 +239,7 @@ void feat_ble_hidsniff(void)
     /* Open the SD log (best effort). */
     s_have_log = false;
     if (sd_mount()) {
-        s_log = sdlog_open("hidsniff", "ts,keys,raw");
+        s_log = sdlog_open_in(SD_BLE_CAPTURE_DIR, "hidsniff", "ts,keys,raw");
         s_have_log = (bool)s_log;
     }
 

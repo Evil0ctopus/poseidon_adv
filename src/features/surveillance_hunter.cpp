@@ -4,8 +4,8 @@
  * beacon/probe, scores against sigdb_surveillance.h.
  *
  * Hits stream to two SD files:
- *   /poseidon/surv-<ts>.csv   WiGLE-format (importable into Plume tooling)
- *   /poseidon/surv-<ts>.json  JSONL one-event-per-line (Plume-compatible)
+ *   /poseidon/captures/surveillance/surv-<ts>.csv
+ *   /poseidon/captures/surveillance/surv-<ts>.jsonl
  *
  * GPS coords come from the existing gps_poll background task — same
  * source wardrive uses. Status bar shows live hit counts by class.
@@ -52,8 +52,10 @@ static void csv_escape(const char *value, char *out, size_t out_size)
     size_t pos = 0;
     if (out_size == 0) return;
     for (const char *p = value ? value : ""; *p && pos + 2 < out_size; ++p) {
-        if (*p == '"') out[pos++] = '"';
-        out[pos++] = *p;
+        uint8_t c = (uint8_t)*p;
+        if (c < 0x20 || c >= 0x7F) c = '?';
+        if (c == '"') out[pos++] = '"';
+        out[pos++] = (char)c;
     }
     out[pos] = '\0';
     if (strchr(out, ',') || strchr(out, '"')) {
@@ -72,8 +74,10 @@ static void json_escape(const char *value, char *out, size_t out_size)
     size_t pos = 0;
     if (out_size == 0) return;
     for (const char *p = value ? value : ""; *p && pos + 2 < out_size; ++p) {
-        if (*p == '"' || *p == '\\') out[pos++] = '\\';
-        out[pos++] = *p;
+        uint8_t c = (uint8_t)*p;
+        if (c < 0x20 || c >= 0x7F) c = '?';
+        if (c == '"' || c == '\\') out[pos++] = '\\';
+        out[pos++] = (char)c;
     }
     out[pos] = '\0';
 }
@@ -120,9 +124,11 @@ static bool dedup_should_suppress(const uint8_t bssid[6], uint32_t now)
 static bool open_logs(void)
 {
     uint32_t ts = millis() / 1000;
-    snprintf(s_csv_path,   sizeof(s_csv_path),   "/poseidon/surv-%lu.csv",   (unsigned long)ts);
-    snprintf(s_jsonl_path, sizeof(s_jsonl_path), "/poseidon/surv-%lu.jsonl", (unsigned long)ts);
-    SD.mkdir("/poseidon");
+    if (!sd_ensure_layout()) return false;
+    snprintf(s_csv_path, sizeof(s_csv_path), SD_SURVEILLANCE_DIR "/surv-%lu.csv",
+             (unsigned long)ts);
+    snprintf(s_jsonl_path, sizeof(s_jsonl_path), SD_SURVEILLANCE_DIR "/surv-%lu.jsonl",
+             (unsigned long)ts);
 
     s_csv = SD.open(s_csv_path, FILE_WRITE);
     if (!s_csv) {

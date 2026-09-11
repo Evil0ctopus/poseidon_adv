@@ -6,7 +6,19 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(empty — new work since 0.6.8 lands here)
+### Changed
+
+- Generated SD output is organized under `/poseidon/captures/` by feature
+  (`wardrive`, `ble`, `surveillance`, `defmon`, `wifi`, and `subghz`) and
+  credential logs now live under `/poseidon/credentials/`. Existing root-level
+  files remain untouched and TRIDENT retains backward-compatible reads.
+
+### Fixed
+
+- CCTV LAN sweeps now require camera-specific HTTP or RTSP evidence instead of
+  counting every web server as a camera. The scanner avoids unsupported TLS
+  probes, reduces dead-host socket churn, supports aborts inside long probes,
+  and stops safely if internal heap approaches the crash threshold.
 
 ## [0.6.8] - 2026-07-03
 

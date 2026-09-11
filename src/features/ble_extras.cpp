@@ -204,9 +204,10 @@ void feat_ble_sniff(void)
 {
     radio_switch(RADIO_BLE);
     if (!sd_mount()) { ui_toast("SD needed", T_BAD, 1500); return; }
-    SD.mkdir("/poseidon");
+    if (!sd_ensure_layout()) { ui_toast("cant create log dir", T_BAD, 1500); return; }
     char path[64];
-    snprintf(path, sizeof(path), "/poseidon/blesniff-%lu.csv", (unsigned long)(millis() / 1000));
+    snprintf(path, sizeof(path), SD_BLE_CAPTURE_DIR "/blesniff-%lu.csv",
+             (unsigned long)(millis() / 1000));
     s_sniff_file = SD.open(path, FILE_WRITE);
     if (!s_sniff_file) { ui_toast("cant open file", T_BAD, 1500); return; }
     s_sniff_file.println("ms,mac,rssi,addr_type,name,adv_hex");

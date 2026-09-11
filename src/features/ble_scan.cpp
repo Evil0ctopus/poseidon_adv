@@ -277,7 +277,7 @@ static void drain_scan_results(NimBLEScanResults &results)
     }
 }
 
-static void start_scan(void)
+static void start_scan(bool reset_controller = false)
 {
     Serial.printf("[ble] entry heap=%u\n", (unsigned)ESP.getFreeHeap());
     Serial.flush();
@@ -301,24 +301,26 @@ static void start_scan(void)
      *   - setDuplicateFilter(false).
      *   - getResults(ms) is blocking — populates the list internally;
      *     we iterate the returned object, not a callback buffer. */
-    if (NimBLEDevice::isInitialized()) {
+    if (reset_controller && NimBLEDevice::isInitialized()) {
         Serial.println("[ble] deinit"); Serial.flush();
         NimBLEDevice::deinit(true);
-    }
-    /* Animated settle instead of a blind delay(500) — the controller needs
-     * ~500 ms after deinit before init, and the old blank wait looked frozen. */
-    uint32_t settle = millis() + 500;
-    while (millis() < settle) {
-        ui_scanning_indicator("starting BLE", -1);
-        delay(20);
+        /* Animated settle instead of a blind delay(500) — the controller needs
+         * ~500 ms after deinit before init, and the old blank wait looked frozen. */
+        uint32_t settle = millis() + 500;
+        while (millis() < settle) {
+            ui_scanning_indicator("starting BLE", -1);
+            delay(20);
+        }
     }
 
-    ui_scanning_indicator("starting BLE", -1);   /* fresh sweep just before the blocking init */
-    Serial.println("[ble] init"); Serial.flush();
-    if (!NimBLEDevice::init("")) {
-        Serial.println("[ble] init FAILED"); Serial.flush();
-        s_scanning = false;   /* clear the flag we raised up front */
-        return;
+    if (!NimBLEDevice::isInitialized()) {
+        ui_scanning_indicator("starting BLE", -1);
+        Serial.println("[ble] init"); Serial.flush();
+        if (!NimBLEDevice::init("")) {
+            Serial.println("[ble] init FAILED"); Serial.flush();
+            s_scanning = false;
+            return;
+        }
     }
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
@@ -465,7 +467,7 @@ void feat_ble_scan(void)
         case ';': case PK_UP:    cursor = (cursor > 0) ? cursor - 1 : 0; break;
         case '.': case PK_DOWN:  cursor++; break;
         case 'r': case 'R':
-            if (!s_scanning) { s_count = 0; start_scan(); }
+            if (!s_scanning) { s_count = 0; start_scan(true); }
             break;
         case '?':
             ui_show_current_help();
@@ -482,8 +484,9 @@ void feat_ble_scan(void)
         case 's': case 'S': {
             if (s_count == 0) { ui_toast("no results", T_WARN, 800); break; }
             char path[64];
-            File f = sdlog_open("blescan", "mac,addr_type,type,name,rssi",
-                                path, sizeof(path));
+            File f = sdlog_open_in(SD_BLE_CAPTURE_DIR, "blescan",
+                                   "mac,addr_type,type,name,rssi",
+                                   path, sizeof(path));
             if (!f) { ui_toast("SD open failed", T_BAD, 1000); break; }
             int wrote = 0;
             for (int i = 0; i < s_count; ++i) {

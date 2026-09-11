@@ -207,7 +207,7 @@ static void strike_phase(void) {
             ui_draw_footer("ESC=stop S=save");
             d.setTextColor(T_BAD, T_BG); d.setCursor(4, BODY_Y+2); d.print("STRIKE: Conn Sniff");
             d.drawFastHLine(4, BODY_Y+12, SCR_W-8, T_BAD);
-            File pf = sdlog_open("scout_strike", "ts,data");
+            File pf = sdlog_open_in(SD_BLE_CAPTURE_DIR, "scout_strike", "ts,data");
             uint32_t pkt = 0, ld = 0;
             while (true) {
                 while (NRF52Hardware::available()) {
