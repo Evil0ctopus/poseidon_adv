@@ -56,7 +56,7 @@ static void load_settings(void)
     if (s_loaded) return;
     s_loaded = true;
     Preferences p;
-    if (p.begin("pscr", true)) {
+    if (p.begin("pscr", false)) {
         s_enabled    = p.getBool ("enabled", true);
         s_timeout_ms = p.getUInt ("timeoutms", 120000);
         s_pick       = (int8_t)p.getChar("pick", SCREENSAVER_PICK_SHUFFLE);
@@ -183,7 +183,6 @@ static void wd_spawn_ap(void)
 static void wd_render(void)
 {
     auto &d = M5Cardputer.Display;
-    d.fillScreen(T_BG);
     d.setTextColor(T_ACCENT, T_BG);
     d.setCursor(2, 2); d.print("WARDRIVE.cinema");
     char hud[24];
@@ -280,6 +279,7 @@ static void run_wardrive_cinema(void)
     wd_next_capture = millis() + 4000;
     wd_next_streak  = millis() + 2000;
     for (int i = 0; i < 4; ++i) wd_spawn_ap();
+    M5Cardputer.Display.fillScreen(T_BG);
     while (input_poll() == PK_NONE) {
         wd_tick(millis());
         wd_render();
@@ -980,7 +980,6 @@ static void run_tide_waves(void)
     };
 
     while (input_poll() == PK_NONE) {
-        uint32_t now = millis();
         d.fillScreen(T_BG);
 
         /* Header */

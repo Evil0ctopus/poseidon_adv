@@ -87,7 +87,7 @@ static int build_filtered(int *idx)
 /* Header row with AP count + filter status. Overwritten in place. */
 static void draw_list_header(void)
 {
-    char buf[40];
+    char buf[64];
     if (s_filter[0] || s_filter_open_only) {
         snprintf(buf, sizeof(buf), "APs %d  filter:%s%s", s_ap_count,
                  s_filter, s_filter_open_only ? "+open" : "");
@@ -619,6 +619,17 @@ void feat_wifi_scan(void)
             break;
         case 's': case 'S': {
             if (s_ap_count == 0) { ui_toast("no results", T_WARN, 800); last_count = -1; break; }
+            /* Keep the highlighted AP as the next Connect target. The CSV
+             * export remains a report; credentials are still collected only
+             * by WiFi Connect. */
+            int selected_idx[MAX_APS];
+            int selected_n = 0;
+            for (int i = 0; i < s_ap_count; ++i)
+                if (ap_matches_filter(s_aps[i])) selected_idx[selected_n++] = i;
+            if (selected_n > 0 && cursor < selected_n) {
+                g_last_selected_ap = s_aps[selected_idx[cursor]];
+                g_last_selected_valid = true;
+            }
             char path[64];
             File f = sdlog_open("wifiscan", "ssid,bssid,channel,rssi,auth",
                                 path, sizeof(path));

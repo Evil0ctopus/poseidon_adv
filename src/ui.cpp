@@ -27,7 +27,7 @@ bool ui_big_text(void)
 {
     if (!s_big_text_loaded) {
         Preferences p;
-        if (p.begin("pui", true)) {
+        if (p.begin("pui", false)) {
             s_big_text = p.getBool("bigtxt", false);
             p.end();
         }
@@ -199,7 +199,7 @@ void ui_draw_status(const char *radio, const char *extra)
      * are paired over ESP-NOW. Sits inside the gradient; re-drawn as
      * part of the cached state so flicker is zero. */
     if (c5_n > 0) {
-        char badge[12];
+        char badge[16];
         snprintf(badge, sizeof(badge), "C5 x%d", c5_n);
         int bw = d.textWidth(badge);
         int bx = SCR_W - w - bw - 12;

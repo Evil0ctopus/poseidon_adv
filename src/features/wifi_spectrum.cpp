@@ -49,7 +49,7 @@ static const char *spec_style_name(spec_style_t s)
 static void spec_style_load(void)
 {
     Preferences p;
-    if (p.begin("pui", true)) {
+    if (p.begin("pui", false)) {
         uint8_t v = p.getUChar("specstyle", 0);
         if (v < SPEC_STYLE_COUNT) s_style = (spec_style_t)v;
         p.end();
@@ -228,7 +228,6 @@ static void draw_waterfall(void)
     const int rows_h   = bottom - top;
     const int col_w    = (SCR_W - 8) / 13;   /* 14 cols × 13 ~= 17 px */
     const int start_x  = 4 + ((SCR_W - 8) - col_w * 13) / 2;
-    const int rows     = rows_h;             /* 1 row per pixel — dense */
     if (s_spec_first) {
         d.fillRect(0, BODY_Y, SCR_W, BODY_H, T_BG);
         d.setTextColor(T_ACCENT, T_BG);
@@ -344,7 +343,8 @@ static void draw_radar(void)
         float ang = (c - 1) * (360.0f / 13.0f) - 90.0f;
         float rad = ang * (float)M_PI / 180.0f;
         int pct = (s_radar_blip[c].rssi + 100) * 100 / 70;
-        if (pct < 5) pct = 5; if (pct > 100) pct = 100;
+        if (pct < 5) pct = 5;
+        if (pct > 100) pct = 100;
         int dist = rmax * (100 - pct) / 100;   /* hot = close to center */
         int bx = cx + (int)(cosf(rad) * dist);
         int by = cy + (int)(sinf(rad) * dist);

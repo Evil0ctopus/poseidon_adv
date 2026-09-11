@@ -29,7 +29,6 @@
  */
 #pragma once
 
-#include <Arduino.h>
 #include <stdint.h>
 #include <ctype.h>
 
@@ -157,6 +156,11 @@ static inline bool raven_uuid_match(uint16_t uuid16)
     for (int i = 0; i < RAVEN_UUID_16_N; i++)
         if (uuid16 == RAVEN_UUID_16[i]) return true;
     return false;
+}
+
+static inline bool raven_company_match(uint16_t company_id)
+{
+    return company_id == BLE_CID_XUNTONG;
 }
 
 static inline const char *surv_class_name(surv_class_t c)

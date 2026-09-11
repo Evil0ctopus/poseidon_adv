@@ -156,7 +156,7 @@ void theme_init(void)
     if (s_inited) return;
     s_inited = true;
     Preferences p;
-    if (p.begin("pui", true)) {   /* read-only */
+    if (p.begin("pui", false)) {
         uint8_t v = p.getUChar("theme", (uint8_t)THEME_POSEIDON);
         p.end();
         if (v >= THEME__COUNT) v = THEME_POSEIDON;

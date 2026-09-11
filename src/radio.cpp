@@ -15,6 +15,23 @@
 
 static radio_domain_t s_active = RADIO_NONE;
 
+static void wifi_release_for_ble(void)
+{
+    wifi_mode_t cur = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&cur) != ESP_OK) return;
+
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    delay(50);
+    esp_wifi_deinit();
+
+    esp_netif_t *sta_if = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta_if) esp_netif_destroy_default_wifi(sta_if);
+    esp_netif_t *ap_if = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (ap_if) esp_netif_destroy_default_wifi(ap_if);
+}
+
 void wifi_force_clean_sta(void)
 {
     /* Probe whether WiFi was ever inited this session. esp_wifi_get_mode
@@ -169,8 +186,18 @@ static void teardown_current(void)
 bool radio_switch(radio_domain_t target)
 {
     if (target == s_active) return true;
+    radio_domain_t previous = s_active;
     teardown_current();
     if (target == RADIO_NONE) return true;
+
+    /* BLE needs roughly 60 KB of internal heap for controller + NimBLE
+     * startup. Wi-Fi normally stays stopped-but-initialized to avoid
+     * fragmentation between Wi-Fi features, but that retained driver state
+     * makes a Wi-Fi -> BLE transition fail with ESP_ERR_NO_MEM. Release the
+     * Wi-Fi driver only for this cross-domain transition. */
+    if (target == RADIO_BLE && previous == RADIO_WIFI) {
+        wifi_release_for_ble();
+    }
 
     switch (target) {
     case RADIO_WIFI:

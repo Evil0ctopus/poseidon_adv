@@ -8,6 +8,7 @@
 #include "radio.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_netif.h>
 #include <SD.h>
 #include "../sd_helper.h"
 #include <Preferences.h>
@@ -15,6 +16,7 @@
 #include <time.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include "../wifi_types.h"
 
 /* ========== Saved WiFi ========== */
 
@@ -33,10 +35,22 @@ void feat_wifi_connect(void)
     d.setTextColor(T_FG, T_BG);
     String ssid = s_prefs.getString("ssid", "");
     String pass = s_prefs.getString("pass", "");
+    bool scanned_ssid = false;
+    /* A freshly selected scan result must win over stale credentials from a
+     * previous failed attempt. Require an explicit password for this target
+     * instead of silently retrying an old value. */
+    if (g_last_selected_valid && g_last_selected_ap.ssid[0]) {
+        ssid = g_last_selected_ap.ssid;
+        pass = "";
+        scanned_ssid = true;
+    }
 
     if (ssid.length() > 0) {
         d.setCursor(4, BODY_Y + 22); d.printf("saved: %s", ssid.c_str());
-        d.setCursor(4, BODY_Y + 34); d.print("[C] connect  [N] new  [X] forget");
+        d.setCursor(4, BODY_Y + 34);
+        d.print((scanned_ssid || pass.length() == 0)
+                ? "[C] enter password  [N] new"
+                : "[C] connect  [N] new  [X] forget");
     } else {
         d.setCursor(4, BODY_Y + 22); d.print("no saved network");
         d.setCursor(4, BODY_Y + 34); d.print("[N] add new");
@@ -64,24 +78,65 @@ void feat_wifi_connect(void)
             ui_toast("forgotten", T_WARN, 600);
             return;
         }
-        if ((k == 'c' || k == 'C') && ssid.length() > 0) break;
+        if ((k == 'c' || k == 'C') && ssid.length() > 0) {
+            if (pass.length() == 0) {
+                char p[65];
+                if (!input_line("password:", p, sizeof(p))) continue;
+                pass = p;
+                s_prefs.putString("ssid", ssid);
+                s_prefs.putString("pass", pass);
+                scanned_ssid = false;
+            }
+            break;
+        }
     }
 
-    /* Guard the Arduino WiFi.mode(): if a prior feature raw-inited the driver,
-     * WiFi's cached mode is stale and WiFi.mode() double-creates the STA netif
-     * and asserts. Only let Arduino init when the driver is truly down.
-     * (Mirror of mesh.cpp / c5_cmd.cpp — POS-AUDIT-020.) */
-    wifi_mode_t cur = WIFI_MODE_NULL;
-    if (esp_wifi_get_mode(&cur) != ESP_OK) {
-        WiFi.mode(WIFI_STA);
+    /* Scan and most WiFi features use the raw lean-IDF driver. Calling
+     * Arduino WiFi.begin() after that path can double-create the STA netif
+     * and reboot on Cardputer-Adv. Configure and connect through the same
+     * raw-IDF state instead. */
+    if (!wifi_lean_sta_init()) {
+        s_prefs.end();
+        ui_toast("WiFi init failed", T_BAD, 1500);
+        return;
     }
-    WiFi.begin(ssid.c_str(), pass.c_str());
+    wifi_config_t sta_cfg = {};
+    strncpy((char *)sta_cfg.sta.ssid, ssid.c_str(), sizeof(sta_cfg.sta.ssid) - 1);
+    strncpy((char *)sta_cfg.sta.password, pass.c_str(), sizeof(sta_cfg.sta.password) - 1);
+    Serial.printf("[wifi_connect] ssid='%s' pass_len=%u\n",
+                  ssid.c_str(), (unsigned)pass.length());
+    esp_wifi_disconnect();
+    esp_err_t cfg_rc = esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
+    esp_err_t conn_rc = (cfg_rc == ESP_OK) ? esp_wifi_connect() : cfg_rc;
+    Serial.printf("[wifi_connect] set_config=%s connect=%s\n",
+                  esp_err_to_name(cfg_rc), esp_err_to_name(conn_rc));
+    if (cfg_rc != ESP_OK || conn_rc != ESP_OK) {
+        s_prefs.end();
+        ui_toast("WiFi connect failed", T_BAD, 1500);
+        return;
+    }
     ui_clear_body();
     d.setTextColor(T_WARN, T_BG);
     d.setCursor(4, BODY_Y + 2); d.printf("connecting to %s", ssid.c_str());
 
     uint32_t deadline = millis() + 15000;
-    while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
+    uint32_t next_status_log = 0;
+    esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip_info = {};
+    bool connected = false;
+    while (!connected && millis() < deadline) {
+        wifi_ap_record_t ap_info = {};
+        connected = esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK;
+        if (sta_netif) {
+            esp_netif_get_ip_info(sta_netif, &ip_info);
+            connected = connected && ip_info.ip.addr != 0;
+        }
+        if (millis() >= next_status_log) {
+            next_status_log = millis() + 1000;
+            Serial.printf("[wifi_connect] associated=%d ip=%s\n",
+                          connected ? 1 : 0,
+                          ip_info.ip.addr ? IPAddress(ip_info.ip.addr).toString().c_str() : "0.0.0.0");
+        }
         d.fillRect(0, BODY_Y + 22, SCR_W, 12, T_BG);
         d.setCursor(4, BODY_Y + 22);
         d.setTextColor(T_DIM, T_BG);
@@ -91,14 +146,22 @@ void feat_wifi_connect(void)
     }
 
     d.fillRect(0, BODY_Y + 22, SCR_W, 60, T_BG);
-    if (WiFi.status() == WL_CONNECTED) {
+    if (connected) {
+        Serial.println("[wifi_connect] connected");
         d.setTextColor(T_GOOD, T_BG);
         d.setCursor(4, BODY_Y + 22); d.print("CONNECTED");
         d.setTextColor(T_FG, T_BG);
-        d.setCursor(4, BODY_Y + 34); d.printf("IP : %s", WiFi.localIP().toString().c_str());
-        d.setCursor(4, BODY_Y + 46); d.printf("GW : %s", WiFi.gatewayIP().toString().c_str());
-        d.setCursor(4, BODY_Y + 58); d.printf("DNS: %s", WiFi.dnsIP().toString().c_str());
+        d.setCursor(4, BODY_Y + 34); d.printf("IP : %s", IPAddress(ip_info.ip.addr).toString().c_str());
+        d.setCursor(4, BODY_Y + 46); d.printf("GW : %s", IPAddress(ip_info.gw.addr).toString().c_str());
+        d.setCursor(4, BODY_Y + 58); d.printf("MASK: %s", IPAddress(ip_info.netmask.addr).toString().c_str());
     } else {
+        wifi_ap_record_t ap_info = {};
+        esp_err_t ap_rc = esp_wifi_sta_get_ap_info(&ap_info);
+        Serial.printf("[wifi_connect] failed ap_info=%s\n", esp_err_to_name(ap_rc));
+        /* Do not keep a credential that just failed association. The next
+         * Connect attempt must ask for a fresh password instead of retrying
+         * stale input indefinitely. */
+        s_prefs.remove("pass");
         d.setTextColor(T_BAD, T_BG);
         d.setCursor(4, BODY_Y + 22); d.print("FAILED");
     }

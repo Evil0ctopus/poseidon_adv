@@ -32,7 +32,7 @@ bool ui_ambient_enabled(void)
 {
     if (!s_amb_loaded) {
         Preferences p;
-        if (p.begin("pamb", true)) {
+        if (p.begin("pamb", false)) {
             s_amb_enabled = p.getBool("enabled", true);
             p.end();
         }

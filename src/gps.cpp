@@ -84,7 +84,7 @@ bool gps_user_enabled(void)
 {
     if (!s_user_enabled_loaded) {
         Preferences p;
-        if (p.begin("gps", true)) {
+        if (p.begin("gps", false)) {
             s_user_enabled_cache = p.getUChar("enabled", 0) ? true : false;
             p.end();
         }

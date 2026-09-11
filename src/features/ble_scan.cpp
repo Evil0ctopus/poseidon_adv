@@ -21,6 +21,7 @@
 #include "ble_types.h"
 #include "ble_db.h"
 #include "../sigdb_bt.h"
+#include "../sigdb_surveillance.h"
 #include "sd_helper.h"
 #include <NimBLEDevice.h>
 #include <SD.h>
@@ -72,6 +73,17 @@ static void classify(const NimBLEAdvertisedDevice *d, char *out, size_t out_sz)
     std::string md;
     if (d->haveManufacturerData()) md = d->getManufacturerData();
 
+    /* Raven/ShotSpotter advertises a stable company identifier. Check it
+     * before the general vendor database so the saved BLE CSV preserves the
+     * surveillance tag instead of only reporting the manufacturer name. */
+    if (md.size() >= 2) {
+        uint16_t cid = (uint16_t)((uint8_t)md[0] | ((uint8_t)md[1] << 8));
+        if (raven_company_match(cid)) {
+            snprintf(out, out_sz, "RAVEN-BLE");
+            return;
+        }
+    }
+
     /* NimBLE stores the MAC little-endian. Reverse for display/OUI.
      * Crucial: bind the NimBLEAddress to a named local first —
      * getAddress() returns by value and getNative() hands out a
@@ -118,6 +130,10 @@ static void classify(const NimBLEAdvertisedDevice *d, char *out, size_t out_sz)
                 got16 = true;
             }
             if (got16) {
+                if (raven_uuid_match(u16)) {
+                    snprintf(out, out_sz, "RAVEN-UUID");
+                    return;
+                }
                 const char *nm = ble_db_svc_uuid(u16);
                 if (nm) { snprintf(out, out_sz, "%s", nm); return; }
                 /* sigdb_bt extras — Eddystone, Fast Pair, Drone RID, etc. */

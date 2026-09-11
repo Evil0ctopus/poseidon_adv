@@ -4,7 +4,7 @@
  * Credit: architecture + probe set ported from @7h30th3r0n3's
  * Evil-M5Project (Evil-Cardputer-v1-5-2.ino `scanCCTVCameras()` block)
  * and RaspyJack (`payloads/reconnaissance/cctv_scanner.py`). Their SD
- * layout (`/evil/CCTV/*`) is preserved as `/poseidon/cctv-*.csv` so
+ * layout (`/evil/CCTV/`) is preserved as `/poseidon/cctv-*.csv` so
  * downstream tooling can still consume the output.
  *
  * What it does on each target IP:
@@ -41,8 +41,10 @@
 #include "input.h"
 #include "radio.h"
 #include <esp_heap_caps.h>
+#include <esp_wifi.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <esp_netif.h>
 #include <SD.h>
 #include "../sd_helper.h"
 #include "../net_helpers.h"
@@ -198,7 +200,7 @@ static bool looks_like_login_page(const String &body)
 static int try_creds(IPAddress ip, uint16_t port, const char *path)
 {
     for (int i = 0; i < CRED_N && !s_abort; ++i) {
-        char auth[128];
+        char auth[140];
         if (!build_basic_auth(DEFAULT_CREDS[i].user, DEFAULT_CREDS[i].pass,
                               auth, sizeof(auth))) continue;
         http_result_t r;
@@ -223,7 +225,11 @@ static bool rtsp_options(IPAddress ip, uint16_t port)
         if (c.available()) {
             line = c.readStringUntil('\n');
             c.stop();
-            return line.indexOf("200 OK") >= 0;
+            /* Many embedded RTSP servers return 404 to OPTIONS * even
+             * though the service is alive and accepts DESCRIBE on a stream
+             * path. Treat any RTSP status line as proof of an RTSP service;
+             * the path probe below decides whether a stream is available. */
+            return line.startsWith("RTSP/");
         }
         delay(5);
     }
@@ -418,18 +424,6 @@ static void draw_progress(int done, int total, int hits,
     }
 }
 
-/* Abort-sensitive sleep. */
-static bool sleepy(uint32_t ms)
-{
-    uint32_t end = millis() + ms;
-    while (millis() < end) {
-        uint16_t k = input_poll();
-        if (k == PK_ESC) { s_abort = true; return false; }
-        delay(5);
-    }
-    return true;
-}
-
 /* ---- three entry modes ---- */
 
 static void reset_state(void)
@@ -448,9 +442,22 @@ static void wait_for_exit_key(void)
     }
 }
 
+static bool cctv_wifi_info(IPAddress &local_ip)
+{
+    wifi_ap_record_t ap = {};
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return false;
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!sta) return false;
+    esp_netif_ip_info_t info = {};
+    if (esp_netif_get_ip_info(sta, &info) != ESP_OK || info.ip.addr == 0) return false;
+    local_ip = IPAddress(info.ip.addr);
+    return true;
+}
+
 static void scan_lan(void)
 {
-    if (WiFi.status() != WL_CONNECTED) {
+    IPAddress local_ip;
+    if (!cctv_wifi_info(local_ip)) {
         ui_toast("no WiFi", T_BAD, 1200);
         return;
     }
@@ -458,7 +465,7 @@ static void scan_lan(void)
     open_log();
     s_scan_start_ms = millis();
 
-    IPAddress me  = WiFi.localIP();
+    IPAddress me  = local_ip;
     uint32_t base = ((uint32_t)me[0] << 24) | ((uint32_t)me[1] << 16)
                   | ((uint32_t)me[2] << 8);
     int total = 254;

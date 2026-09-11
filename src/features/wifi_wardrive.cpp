@@ -27,6 +27,7 @@
 #include "wdr_mood.h"
 #include "wdr_matrix.h"
 #include "../sfx.h"
+#include "../heap_budget.h"
 
 static portMUX_TYPE s_wdr_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -34,7 +35,7 @@ static portMUX_TYPE s_wdr_mux = portMUX_INITIALIZER_UNLOCKED;
  * seed themselves from what we've already catalogued in this session. */
 wdr_ap_t *g_wdr_aps = nullptr;
 
-/* Allocate the 20 KB AP buffer on first wardrive use. Kept resident afterward
+    /* Allocate the AP buffer on first wardrive use. Kept resident afterward
  * because triton/pmkid read it later in the session; freeing on exit would
  * corrupt those. Sessions that never wardrive keep the 20 KB free. */
 bool wdr_aps_ensure(void)
@@ -68,6 +69,7 @@ static uint32_t s_entry_ms = 0;           /* millis() at feature start */
 static volatile uint32_t s_last_new_ms = 0;      /* millis() of most recent new AP */
 static volatile bool     s_gps_ever_locked = false;
 static volatile bool     s_juicy_pending = false; /* set in RX cb, consumed in UI loop */
+static volatile uint32_t s_cache_rollovers = 0;
 
 static int find_ap(const uint8_t *bssid)
 {
@@ -111,6 +113,35 @@ static const char *auth_to_wigle(uint8_t a)
     }
 }
 
+static void format_wigle_time(const gps_fix_t &g, char out[16])
+{
+    out[0] = '\0';
+    if (!g.valid || strlen(g.date) < 6 || strlen(g.utc) < 6) return;
+    snprintf(out, 16, "20%c%c%c%c%c%c-%c%c%c%c%c%c",
+             g.date[4], g.date[5], g.date[2], g.date[3], g.date[0], g.date[1],
+             g.utc[0], g.utc[1], g.utc[2], g.utc[3], g.utc[4], g.utc[5]);
+}
+
+static void csv_escape(const char *value, char *out, size_t out_size)
+{
+    size_t pos = 0;
+    if (out_size == 0) return;
+    for (const char *p = value ? value : ""; *p && pos + 2 < out_size; ++p) {
+        if (*p == '"') out[pos++] = '"';
+        out[pos++] = *p;
+    }
+    out[pos] = '\0';
+    if (strchr(out, ',') || strchr(out, '"')) {
+        size_t len = strlen(out);
+        if (len + 2 < out_size) {
+            memmove(out + 1, out, len + 1);
+            out[0] = '"';
+            out[len + 1] = '"';
+            out[len + 2] = '\0';
+        }
+    }
+}
+
 static void flush_dirty_rows(void)
 {
     if (!s_csv) return;
@@ -136,7 +167,7 @@ static void flush_dirty_rows(void)
              * fixes. Better to drop the row entirely; the AP stays in the
              * in-RAM table for a later flush when GPS catches up. Leave
              * dirty=true so it retries on the next flush after a fix. */
-            if (!(a.lat == 0.0 && a.lon == 0.0)) {
+            if (a.has_gps) {
                 a.dirty = false;
                 snap = a;           /* copy fields to write under the lock */
                 write_row = true;
@@ -144,17 +175,12 @@ static void flush_dirty_rows(void)
         }
         portEXIT_CRITICAL(&s_wdr_mux);
         if (!write_row) continue;
-        /* POS-AUDIT-207 / wifi-020: FirstSeen field left empty rather
-         * than stamped with the CURRENT GPS snapshot's date — the per-AP
-         * first_seen is a millis() since boot which can't be converted
-         * to a wall-clock string without a stored RTC date, and we don't
-         * keep per-AP first-fix dates in the struct (would add ~5 KB
-         * BSS for negligible WiGLE benefit; their importer infers time
-         * from the upload telemetry header). Empty is honest. */
-        s_csv.printf("%02X:%02X:%02X:%02X:%02X:%02X,%s,%s,,%u,%d,%.6f,%.6f,%.1f,5,WIFI\n",
+        char escaped_ssid[70];
+        csv_escape(snap.ssid, escaped_ssid, sizeof(escaped_ssid));
+        s_csv.printf("%02X:%02X:%02X:%02X:%02X:%02X,%s,%s,%s,%u,%d,%.6f,%.6f,%.1f,5,WIFI\n",
                      snap.bssid[0], snap.bssid[1], snap.bssid[2],
                      snap.bssid[3], snap.bssid[4], snap.bssid[5],
-                     snap.ssid, auth_to_wigle(snap.auth),
+                     escaped_ssid, auth_to_wigle(snap.auth), snap.first_seen_utc,
                      snap.channel, snap.rssi, snap.lat, snap.lon, snap.alt);
     }
     s_csv.flush();
@@ -176,14 +202,29 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     bool is_new_ap = false;
     if (idx < 0) {
         if (s_ap_count >= WARDRIVE_MAX_APS) {
-            portEXIT_CRITICAL_ISR(&s_wdr_mux);
-            return;
+            /* The CSV is the durable capture. Reuse the oldest entry only
+             * after its pending row has been flushed, so a full cache does
+             * not silently stop discovering networks. */
+            uint32_t oldest = UINT32_MAX;
+            int victim = -1;
+            for (int i = 0; i < s_ap_count; ++i) {
+                if (!s_aps[i].dirty && s_aps[i].last_seen < oldest) {
+                    oldest = s_aps[i].last_seen;
+                    victim = i;
+                }
+            }
+            if (victim < 0) {
+                portEXIT_CRITICAL_ISR(&s_wdr_mux);
+                return;
+            }
+            idx = victim;
+            s_cache_rollovers++;
+            is_new_ap = true;
         }
-        idx = s_ap_count++;
-        is_new_ap = true;
+        if (idx < 0) idx = s_ap_count++;
         memset(&s_aps[idx], 0, sizeof(wdr_ap_t));
         memcpy(s_aps[idx].bssid, bssid, 6);
-        s_aps[idx].first_seen = millis();
+        s_aps[idx].first_seen_ms = millis();
     }
     wdr_ap_t &a = s_aps[idx];
     a.last_seen = millis();
@@ -238,10 +279,22 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 
     if (pkt->rx_ctrl.rssi > a.rssi || a.rssi == 0) {
         a.rssi = pkt->rx_ctrl.rssi;
-        /* Update GPS position on new best RSSI. */
-        gps_fix_t g;
-        if (gps_snapshot(&g)) { a.lat = g.lat_deg; a.lon = g.lon_deg; a.alt = g.alt_m; }
         a.dirty = true;
+    }
+    /* Keep a sighting useful when the first beacon arrived before GPS lock.
+     * A later packet can attach the first valid position without requiring a
+     * stronger RSSI than the original observation. */
+    gps_fix_t g;
+    if (gps_snapshot(&g) && g.valid) {
+        if (!a.has_gps) {
+            a.lat = g.lat_deg; a.lon = g.lon_deg; a.alt = g.alt_m;
+            a.has_gps = true;
+            a.dirty = true;
+        }
+        if (a.first_seen_utc[0] == '\0') {
+            format_wigle_time(g, a.first_seen_utc);
+            a.dirty = true;
+        }
     }
     portEXIT_CRITICAL_ISR(&s_wdr_mux);
 }
@@ -287,12 +340,28 @@ static void merge_c5_5g(void)
         portENTER_CRITICAL(&s_wdr_mux);
         int idx = find_ap(buf[i].bssid);
         if (idx < 0) {
-            if (s_ap_count >= WARDRIVE_MAX_APS) { portEXIT_CRITICAL(&s_wdr_mux); break; }
-            idx = s_ap_count++;
+            if (s_ap_count >= WARDRIVE_MAX_APS) {
+                uint32_t oldest = UINT32_MAX;
+                int victim = -1;
+                for (int j = 0; j < s_ap_count; ++j) {
+                    if (!s_aps[j].dirty && s_aps[j].last_seen < oldest) {
+                        oldest = s_aps[j].last_seen;
+                        victim = j;
+                    }
+                }
+                if (victim < 0) {
+                    portEXIT_CRITICAL(&s_wdr_mux);
+                    continue;
+                }
+                idx = victim;
+                s_cache_rollovers++;
+            } else {
+                idx = s_ap_count++;
+            }
             is_new = true;
             memset(&s_aps[idx], 0, sizeof(wdr_ap_t));
             memcpy(s_aps[idx].bssid, buf[i].bssid, 6);
-            s_aps[idx].first_seen = millis();
+            s_aps[idx].first_seen_ms = millis();
         }
         wdr_ap_t &a = s_aps[idx];
         a.last_seen = millis();
@@ -302,7 +371,14 @@ static void merge_c5_5g(void)
         a.ssid[sizeof(a.ssid) - 1] = '\0';
         if (buf[i].rssi > a.rssi || a.rssi == 0) {
             a.rssi = buf[i].rssi;
-            if (have_gps) { a.lat = g.lat_deg; a.lon = g.lon_deg; a.alt = g.alt_m; }
+            if (have_gps) {
+                a.lat = g.lat_deg; a.lon = g.lon_deg; a.alt = g.alt_m;
+                a.has_gps = true;
+            }
+            a.dirty = true;
+        }
+        if (have_gps && a.first_seen_utc[0] == '\0') {
+            format_wigle_time(g, a.first_seen_utc);
             a.dirty = true;
         }
         portEXIT_CRITICAL(&s_wdr_mux);
@@ -326,7 +402,7 @@ static void draw_plain_view(bool &dirty)
         dirty = false;
     }
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(4, BODY_Y + 18); d.printf("APs: %-5d  5G: %-4d", s_ap_count, s_5g_count);
+    d.setCursor(4, BODY_Y + 18); d.printf("APs: %-5d  5G: %-4d", s_new_this_run, s_5g_count);
     d.setCursor(4, BODY_Y + 30); d.printf("Beacons: %-7lu",  (unsigned long)s_beacons);
     d.setCursor(4, BODY_Y + 42); d.printf("Channel: %-2u  C5:%-3s",
                                           s_current_ch, c5_any_online() ? "on" : "off");
@@ -353,7 +429,7 @@ static void draw_argus_view(argus_mood_t base, bool &dirty)
 
     const int rx = 110;            /* right stat column */
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(rx, BODY_Y + 2);  d.printf("APs %-5d", s_ap_count);
+    d.setCursor(rx, BODY_Y + 2);  d.printf("APs %-5d", s_new_this_run);
     d.setCursor(rx, BODY_Y + 14); d.printf("new %-5d", s_new_this_run);
     d.setCursor(rx, BODY_Y + 26); d.printf("bcn %-6lu", (unsigned long)s_beacons);
     /* ch + 5G count (magenta when a C5 satellite is feeding us) + C5 pip */
@@ -385,11 +461,18 @@ void feat_wifi_wardrive(void)
         return;
     }
 
-    /* Reserve the AP buffer while heap is still clean, before wifi init grabs
-     * its ~30 KB. Bails cleanly (toast) if the 20 KB can't be allocated. */
+    /* Leave BLE or another radio domain before allocating the persistent AP
+     * table. BLE controller memory is otherwise still resident and can make
+     * this 20 KB allocation fail after visiting several screens. */
+    radio_switch(RADIO_WIFI);
+
+    /* Reclaim display/radio caches while the heap is still clean, before WiFi
+     * init grabs its buffers. The preflight checks the largest contiguous
+     * block, which is the constraint that controls this allocation. */
+    if (!g_wdr_aps && !rf_preflight("wardrive", sizeof(wdr_ap_t) * WARDRIVE_MAX_APS))
+        return;
     if (!wdr_aps_ensure()) return;
 
-    radio_switch(RADIO_WIFI);
     wifi_lean_sta_init();
     /* Wardrive is the canonical GPS-using feature; treat entry as the
      * opt-in event (persists user_enabled to NVS so cold-boots also

@@ -25,7 +25,7 @@ menu_style_t menu_style_get(void)
 {
     if (!s_style_loaded) {
         Preferences p;
-        if (p.begin("pui", true)) {
+        if (p.begin("pui", false)) {
             uint8_t v = p.getUChar("mnustyle", (uint8_t)MENU_STYLE_TERMINAL);
             p.end();
             if (v >= MENU_STYLE__COUNT) v = MENU_STYLE_TERMINAL;
@@ -1188,7 +1188,7 @@ static void draw_menu(const menu_node_t *parent, int cursor)
     }
 
     if (n > rows) {
-        char pos[12];
+        char pos[24];
         snprintf(pos, sizeof(pos), "%d/%d", cursor + 1, n);
         int pw = d.textWidth(pos);
         d.setTextColor(T_DIM, T_BG);

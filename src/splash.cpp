@@ -32,24 +32,32 @@ static uint16_t blend565(uint16_t a, uint16_t b, uint8_t t)
     return (r << 11) | (g << 5) | bl;
 }
 
+static uint16_t splash_wire565(uint16_t color)
+{
+    return (uint16_t)((color >> 8) | (color << 8));
+}
+
 /* Draw the sprite centered, fade multiplier 0..255. */
 static void draw_wave(uint8_t brightness)
 {
     auto &d = M5Cardputer.Display;
     int ox = (SCR_W - splash_w) / 2;
     int oy = (SCR_H - splash_h) / 2;
+    uint16_t row[splash_w];
+    d.startWrite();
     for (int y = 0; y < splash_h; ++y) {
         int dy = oy + y;
         if (dy < 0 || dy >= SCR_H) continue;
         for (int x = 0; x < splash_w; ++x) {
             uint16_t c = splash_data[y * splash_w + x];
-            if (c == splash_alpha) continue;
-            int dx = ox + x;
-            if (dx < 0 || dx >= SCR_W) continue;
-            uint16_t out = (brightness == 255) ? c : blend565(0x0000, c, brightness);
-            d.drawPixel(dx, dy, out);
+            uint16_t pixel = (c == splash_alpha)
+                ? 0x0000
+                : ((brightness == 255) ? c : blend565(0x0000, c, brightness));
+            row[x] = splash_wire565(pixel);
         }
+        d.pushImage(ox, dy, splash_w, 1, row);
     }
+    d.endWrite();
 }
 
 void ui_splash(void)

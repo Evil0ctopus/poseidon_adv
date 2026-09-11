@@ -75,7 +75,7 @@ void sfx_init(void)
 {
     if (s_inited) return;             /* idempotent — header says safe to call multiple times */
     Preferences p;
-    if (p.begin("sfx", true)) {        /* read-only */
+    if (p.begin("sfx", false)) {
         s_volume = p.getUChar("vol", 5);
         s_mute   = p.getBool("mute", false);
         p.end();
