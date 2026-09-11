@@ -17,7 +17,10 @@
 #include "wifi_deauth_frame.h"
 #include "ble_db.h"
 #include "dhcp_cache.h"
+#include "../sd_helper.h"
+#include "../sfx.h"
 #include <WiFi.h>
+#include <SD.h>
 #include <esp_wifi.h>
 
 #define MAX_CLIENTS 16
@@ -219,9 +222,11 @@ static void client_detail(int idx)
             }
 
             /* Device type — the headline read. */
+            const char *os_hint = dhcp_os(c.mac);
             d.setTextColor(T_ACCENT2, T_BG);
             d.setCursor(4, BODY_Y + 25);
-            d.printf("TYPE %.33s", dtype);
+            if (os_hint) d.printf("OS   %.14s (%.16s)", os_hint, dtype);
+            else         d.printf("TYPE %.33s", dtype);
 
             /* Raw vendor (or hostname if DHCP caught one). */
             const char *host = dhcp_hostname(c.mac);
@@ -239,20 +244,20 @@ static void client_detail(int idx)
 
             /* Probed SSIDs — the broadcast names this client looks for. */
             d.setTextColor(T_ACCENT, T_BG);
-            d.setCursor(4, BODY_Y + 60);
-            d.printf("PROBES (%u):", c.ssid_n);
+            d.setCursor(4, BODY_Y + 58);
+            d.printf("PROBED NETWORKS (%u):", c.ssid_n);
             d.setTextColor(T_FG, T_BG);
             if (c.ssid_n == 0) {
                 d.setTextColor(T_DIM, T_BG);
-                d.setCursor(78, BODY_Y + 60);
-                d.print("none seen yet");
+                d.setCursor(130, BODY_Y + 58);
+                d.print("(none seen)");
             }
-            for (int i = 0; i < c.ssid_n && i < 4; ++i) {
-                d.setCursor(8, BODY_Y + 71 + i * 10);
-                d.printf("- %.36s", c.ssids[i][0] ? c.ssids[i] : "<broadcast>");
+            for (int i = 0; i < c.ssid_n && i < 3; ++i) {
+                d.setCursor(6, BODY_Y + 68 + i * 9);
+                d.printf("• %.36s", c.ssids[i][0] ? c.ssids[i] : "<broadcast>");
             }
 
-            ui_draw_footer("D=deauth  `=back");
+            ui_draw_footer("D=deauth  H=hunt  `=back");
         }
 
         uint16_t k = input_poll();
@@ -272,6 +277,69 @@ static void client_detail(int idx)
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_promiscuous_rx_cb(client_cb);
     esp_wifi_set_channel(s_target_ch, WIFI_SECOND_CHAN_NONE);
+}
+
+/* Live Proximity / Geiger Hunt mode for selected client */
+static void hunt_client(int idx)
+{
+    auto &d = M5Cardputer.Display;
+    ui_force_clear_body();
+    d.setTextColor(T_ACCENT, T_BG);
+    d.setCursor(4, BODY_Y + 2); d.print("CLIENT GEIGER");
+    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+    ui_draw_footer("`=back to list");
+
+    uint32_t last_beep = 0;
+    uint32_t last_draw = 0;
+    while (true) {
+        uint32_t now = millis();
+        cli_t c = s_clients[idx];
+
+        int rssi = c.rssi ? c.rssi : -95;
+        if (rssi > -30) rssi = -30;
+        if (rssi < -95) rssi = -95;
+
+        /* Beep interval based on RSSI (-95 dBm = 1200ms, -30 dBm = 80ms) */
+        uint32_t interval = (uint32_t)map(rssi, -95, -30, 1200, 80);
+        if (now - last_beep > interval) {
+            last_beep = now;
+            sfx_click();
+        }
+
+        if (now - last_draw > 150) {
+            last_draw = now;
+            d.fillRect(0, BODY_Y + 16, SCR_W, BODY_H - 16, T_BG);
+            d.setTextColor(T_FG, T_BG);
+            d.setCursor(4, BODY_Y + 20);
+            d.printf("TARGET: %02X:%02X:%02X:%02X:%02X:%02X",
+                     c.mac[0], c.mac[1], c.mac[2], c.mac[3], c.mac[4], c.mac[5]);
+
+            const char *h = dhcp_hostname(c.mac);
+            uint32_t oui = ((uint32_t)c.mac[0] << 16) | ((uint32_t)c.mac[1] << 8) | c.mac[2];
+            const char *v = (c.mac[0] & 0x02) ? "Randomized" : ble_db_oui(oui);
+            d.setTextColor(T_ACCENT2, T_BG);
+            d.setCursor(4, BODY_Y + 32);
+            d.printf("DEVICE: %.26s", h ? h : (v ? v : "Unknown"));
+
+            /* Big Proximity Bar */
+            int bar_w = (int)map(rssi, -95, -30, 10, SCR_W - 20);
+            uint16_t col = (rssi >= -55) ? T_GOOD : (rssi >= -75 ? T_WARN : T_BAD);
+            d.drawRect(8, BODY_Y + 48, SCR_W - 16, 20, T_ACCENT);
+            d.fillRect(10, BODY_Y + 50, bar_w, 16, col);
+
+            d.setTextColor(col, T_BG);
+            d.setCursor(4, BODY_Y + 76);
+            d.printf("SIGNAL: %d dBm   Frames: %lu", rssi, (unsigned long)c.frames);
+            uint32_t age = (now - c.last_seen) / 1000;
+            d.setTextColor(T_DIM, T_BG);
+            d.setCursor(4, BODY_Y + 88);
+            d.printf("Last seen: %lu sec ago", (unsigned long)age);
+        }
+
+        uint16_t k = input_poll();
+        if (k == PK_ESC) break;
+        delay(10);
+    }
 }
 
 /* Paint the static list chrome (hline + AP SSID subtitle). Called once at
@@ -366,7 +434,7 @@ void feat_wifi_clients(void)
                   s_target[3], s_target[4], s_target[5]);
 
     int cursor = s_saved_cursor;
-    ui_draw_footer(";/.move ENTER=info D=deauth `=back");
+    ui_draw_footer(";/.=move ENTER=info H=hunt S=save D=deauth");
 
     /* Static chrome painted once at entry; the body never gets a blanket
      * clear after this, so scrolling no longer flashes black. */
@@ -465,6 +533,41 @@ void feat_wifi_clients(void)
             client_detail(cursor);
             /* detail view overwrote our chrome — repaint it and force a
              * full list rebuild on return. */
+            draw_client_chrome();
+            last_count = last_cursor = last_first = -1;
+        }
+        if ((k == 'h' || k == 'H') && s_count > 0 && cursor < s_count) {
+            hunt_client(cursor);
+            draw_client_chrome();
+            last_count = last_cursor = last_first = -1;
+        }
+        if ((k == 's' || k == 'S') && s_count > 0) {
+            if (sd_is_mounted()) {
+                sd_ensure_layout();
+                char path[64];
+                snprintf(path, sizeof(path), SD_CAPTURE_ROOT "/wifi/clients-%lu.csv", (unsigned long)(millis() / 1000));
+                SD.mkdir(SD_CAPTURE_ROOT "/wifi");
+                File f = SD.open(path, FILE_WRITE);
+                if (f) {
+                    f.println("ap_ssid,ap_bssid,mac,vendor,hostname,rssi,frames,ch");
+                    for (int i = 0; i < s_count; ++i) {
+                        uint32_t oui = ((uint32_t)s_clients[i].mac[0] << 16) | ((uint32_t)s_clients[i].mac[1] << 8) | s_clients[i].mac[2];
+                        const char *v = (s_clients[i].mac[0] & 0x02) ? "Randomized" : ble_db_oui(oui);
+                        const char *h = dhcp_hostname(s_clients[i].mac);
+                        f.printf("\"%s\",%02X:%02X:%02X:%02X:%02X:%02X,%02X:%02X:%02X:%02X:%02X:%02X,\"%s\",\"%s\",%d,%lu,%u\n",
+                                 g_last_selected_ap.ssid,
+                                 s_target[0], s_target[1], s_target[2], s_target[3], s_target[4], s_target[5],
+                                 s_clients[i].mac[0], s_clients[i].mac[1], s_clients[i].mac[2], s_clients[i].mac[3], s_clients[i].mac[4], s_clients[i].mac[5],
+                                 v ? v : "Unknown", h ? h : "", (int)s_clients[i].rssi, (unsigned long)s_clients[i].frames, (unsigned)s_target_ch);
+                    }
+                    f.close();
+                    ui_toast("Clients CSV saved", T_GOOD, 800);
+                } else {
+                    ui_toast("File write error", T_BAD, 800);
+                }
+            } else {
+                ui_toast("No SD card", T_WARN, 800);
+            }
             draw_client_chrome();
             last_count = last_cursor = last_first = -1;
         }

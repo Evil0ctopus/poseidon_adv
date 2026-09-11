@@ -137,17 +137,141 @@ static void amb_matrix(int x, int y, int w, int h)
     ui_matrix_rain(x, y, w, h, T_FG);
 }
 
+/* ---- AMBER CRT: phosphor cathode scanline & amber motes ---- */
+static void amb_amber_crt(int x, int y, int w, int h)
+{
+    auto &d = M5Cardputer.Display;
+    uint32_t now = millis();
+
+    /* Subtle scanlines */
+    for (int gy = 0; gy < h; gy += 4) {
+        d.drawFastHLine(x, y + gy, w, 0x1040); /* very faint amber-black */
+    }
+
+    /* Floating amber phosphor sparks */
+    for (int i = 0; i < 6; ++i) {
+        uint32_t period = 4000 + i * 800;
+        uint32_t phase  = (now + i * 1100) % period;
+        int my = (h - 2) - (int)((int64_t)phase * (h + 2) / (int64_t)period);
+        int mx = ((10 + i * 15) * w) / 100;
+        if (my >= 0 && my < h) {
+            d.drawPixel(x + mx, y + my, T_ACCENT);
+            if (my > 0) d.drawPixel(x + mx, y + my - 1, T_ACCENT2);
+        }
+    }
+}
+
+/* ---- NIGHT CITY: high-voltage electric neon grid & motes ---- */
+static void amb_night_city(int x, int y, int w, int h)
+{
+    auto &d = M5Cardputer.Display;
+    uint32_t now = millis();
+
+    /* Diagonal neon grid */
+    int scroll = (int)((now % 4000u) * 25u / 4000u);
+    for (int gx = -scroll; gx < w; gx += 25) {
+        if (gx >= 0 && gx < w) d.drawFastVLine(x + gx, y, h, 0x1100);
+    }
+    for (int gy = -scroll; gy < h; gy += 25) {
+        if (gy >= 0 && gy < h) d.drawFastHLine(x, y + gy, w, 0x1100);
+    }
+
+    /* Electric neon particles (yellow and cyan) */
+    for (int i = 0; i < 8; ++i) {
+        uint32_t period = 3500 + i * 600;
+        uint32_t phase  = (now + i * 900) % period;
+        int my = (h - 2) - (int)((int64_t)phase * (h + 2) / (int64_t)period);
+        int mx = ((8 + i * 12) * w) / 100;
+        if (my >= 0 && my < h) {
+            uint16_t c = (i % 2 == 0) ? T_ACCENT : T_ACCENT2;
+            d.drawPixel(x + mx, y + my, c);
+            if (my > 0) d.drawPixel(x + mx, y + my - 1, 0xFFFF);
+        }
+    }
+}
+
+/* ---- SOLARIS: rising plasma embers ---- */
+static void amb_solaris(int x, int y, int w, int h)
+{
+    auto &d = M5Cardputer.Display;
+    uint32_t now = millis();
+
+    for (int i = 0; i < 8; ++i) {
+        uint32_t period = 4500 + i * 700;
+        uint32_t phase  = (now + i * 1300) % period;
+        int my = (h - 2) - (int)((int64_t)phase * (h + 2) / (int64_t)period);
+        int mx = ((6 + i * 13) * w) / 100;
+        if (my >= 0 && my < h) {
+            uint16_t c = (i % 2 == 0) ? T_ACCENT : T_ACCENT2;
+            d.drawPixel(x + mx, y + my, c);
+            if (my > 0)     d.drawPixel(x + mx, y + my - 1, 0xFFFF);
+            if (my < h - 1) d.drawPixel(x + mx, y + my + 1, T_WARN);
+        }
+    }
+}
+
+/* ---- NORDIC FROST: falling arctic crystal snow ---- */
+static void amb_nordic_frost(int x, int y, int w, int h)
+{
+    auto &d = M5Cardputer.Display;
+    uint32_t now = millis();
+
+    for (int i = 0; i < 8; ++i) {
+        uint32_t period = 4000 + i * 800;
+        uint32_t phase  = (now + i * 1500) % period;
+        int my = (int)((int64_t)phase * (h + 2) / (int64_t)period); /* falling down */
+        int drift = (int)(sinf((float)(now + i * 1000) / 800.0f) * 6.0f);
+        int mx = ((10 + i * 11) * w) / 100 + drift;
+        if (my >= 0 && my < h && mx >= 0 && mx < w) {
+            d.drawPixel(x + mx, y + my, 0xFFFF);
+            if (my > 0) d.drawPixel(x + mx, y + my - 1, T_ACCENT);
+        }
+    }
+}
+
+/* ---- GHOST PURPLE: ultraviolet neural circuit pulses ---- */
+static void amb_ghost_purple(int x, int y, int w, int h)
+{
+    auto &d = M5Cardputer.Display;
+    uint32_t now = millis();
+
+    /* Faint purple grid */
+    for (int gx = 0; gx < w; gx += 30) {
+        d.drawFastVLine(x + gx, y, h, 0x1004);
+    }
+    for (int gy = 0; gy < h; gy += 30) {
+        d.drawFastHLine(x, y + gy, w, 0x1004);
+    }
+
+    /* Ultraviolet pulses */
+    for (int i = 0; i < 7; ++i) {
+        uint32_t period = 5000 + i * 700;
+        uint32_t phase  = (now + i * 1200) % period;
+        int my = (h - 2) - (int)((int64_t)phase * (h + 2) / (int64_t)period);
+        int mx = ((12 + i * 13) * w) / 100;
+        if (my >= 0 && my < h) {
+            d.drawPixel(x + mx, y + my, T_ACCENT);
+            if (my > 0) d.drawPixel(x + mx, y + my - 1, 0xFFFF);
+        }
+    }
+}
+
 void ui_ambient_tick(int x, int y, int w, int h)
 {
     if (!ui_ambient_enabled()) return;
     if (w <= 0 || h <= 0)      return;
     switch (theme_current_id()) {
-    case THEME_POSEIDON:  amb_poseidon(x, y, w, h); break;
-    case THEME_MATRIX:    amb_matrix  (x, y, w, h); break;
-    case THEME_EINK:      /* paper aesthetic — no ambient */    break;
-    case THEME_SYNTHWAVE: amb_poseidon(x, y, w, h); break;  /* cyberpunk lines repainted in vaporwave palette */
-    case THEME_PHANTOM:   amb_poseidon(x, y, w, h); break;  /* same motion, violet repaint */
-    case THEME_BLOOD:     /* fsociety tactical — no ambient, minimal */ break;
-    default:              break;
+    case THEME_POSEIDON:     amb_poseidon    (x, y, w, h); break;
+    case THEME_MATRIX:       amb_matrix      (x, y, w, h); break;
+    case THEME_EINK:         /* paper aesthetic — no ambient */    break;
+    case THEME_SYNTHWAVE:    amb_poseidon    (x, y, w, h); break;  /* cyberpunk lines in vaporwave palette */
+    case THEME_PHANTOM:      amb_poseidon    (x, y, w, h); break;  /* violet repaint */
+    case THEME_BLOOD:        /* fsociety tactical — no ambient */ break;
+    case THEME_AMBER_CRT:    amb_amber_crt   (x, y, w, h); break;
+    case THEME_NIGHT_CITY:   amb_night_city  (x, y, w, h); break;
+    case THEME_SOLARIS:      amb_solaris     (x, y, w, h); break;
+    case THEME_NORDIC_FROST: amb_nordic_frost(x, y, w, h); break;
+    case THEME_GHOST_PURPLE: amb_ghost_purple(x, y, w, h); break;
+    default:                 break;
     }
 }

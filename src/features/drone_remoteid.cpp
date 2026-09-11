@@ -82,10 +82,12 @@ static inline int16_t le_i16(const uint8_t *p)
 /* Latitude/longitude scaled by 1e7 (degrees). */
 static inline double astm_latlon(int32_t v) { return (double)v / 1e7; }
 
-static int find_or_add_drone(const uint8_t src[6])
+static int find_or_add_drone(const uint8_t src[6], bool *is_new)
 {
+    if (is_new) *is_new = false;
     for (int i = 0; i < s_drone_count; i++)
         if (memcmp(s_drones[i].src, src, 6) == 0) return i;
+    if (is_new) *is_new = true;
     if (s_drone_count >= DRONE_N) {
         /* Evict oldest. */
         int oldest = 0;
@@ -146,8 +148,9 @@ static void decode_astm(const uint8_t *data, size_t len, const uint8_t src[6], i
 
     uint8_t msg_type = data[0] >> 4;
     /* uint8_t proto_ver = data[0] & 0xF; */
+    bool newly_added = false;
     portENTER_CRITICAL(&s_mux);
-    int idx = find_or_add_drone(src);
+    int idx = find_or_add_drone(src, &newly_added);
     drone_t &dr = s_drones[idx];
     dr.rssi    = rssi;
     dr.last_ms = millis();
@@ -164,18 +167,6 @@ static void decode_astm(const uint8_t *data, size_t len, const uint8_t src[6], i
         }
     }
     else if (msg_type == ASTM_MSG_LOC_VECTOR && len >= 25) {
-        /* Per F3411-22a §A.2.1.2 Location/Vector layout:
-         *   byte 1: status + height type + e/w direction + speed multiplier
-         *   byte 2: track direction
-         *   byte 3: speed
-         *   byte 4: vertical speed (signed)
-         *   bytes 5-8: latitude (int32, /1e7)
-         *   bytes 9-12: longitude (int32, /1e7)
-         *   bytes 13-14: pressure alt (uint16, scale)
-         *   bytes 15-16: geodetic alt (uint16, scale)
-         *   bytes 17-18: height (uint16, scale)
-         *   ...
-         */
         dr.track_deg = (float)data[2];
         dr.speed_ms  = (float)data[3] * 0.25f;
         dr.lat_deg   = astm_latlon(le_i32(data + 5));
@@ -186,14 +177,14 @@ static void decode_astm(const uint8_t *data, size_t len, const uint8_t src[6], i
         dr.have_loc = true;
     }
     else if (msg_type == ASTM_MSG_SYSTEM && len >= 25) {
-        /* System message — operator (pilot) location at bytes 1..8 (after
-         * flags byte). */
+        /* System message — operator (pilot) location at bytes 1..8 (after flags byte). */
         dr.op_lat_deg = astm_latlon(le_i32(data + 2));
         dr.op_lon_deg = astm_latlon(le_i32(data + 6));
         dr.have_op = true;
     }
     portEXIT_CRITICAL(&s_mux);
 
+    if (newly_added) sfx_scan_hit();
     log_event(dr, msg_type);
 }
 
@@ -224,6 +215,58 @@ class DroneScanCb : public NimBLEScanCallbacks {
 };
 static DroneScanCb s_cb;
 
+static void show_drone_detail(const drone_t &dr)
+{
+    auto &d = M5Cardputer.Display;
+    ui_clear_body();
+    d.setTextColor(T_ACCENT, T_BG);
+    d.setCursor(4, BODY_Y + 2); d.print("DRONE TELEMETRY HUD");
+    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+
+    d.setTextColor(T_GOOD, T_BG);
+    d.setCursor(4, BODY_Y + 16);
+    d.printf("UAS ID: %.20s", dr.uas_id[0] ? dr.uas_id : "<unregistered>");
+
+    d.setTextColor(T_FG, T_BG);
+    d.setCursor(4, BODY_Y + 28);
+    d.printf("BLE MAC: %02X:%02X:%02X:%02X:%02X:%02X (%d dBm)",
+             dr.src[0], dr.src[1], dr.src[2], dr.src[3], dr.src[4], dr.src[5], (int)dr.rssi);
+
+    d.setTextColor(T_ACCENT2, T_BG);
+    d.setCursor(4, BODY_Y + 40);
+    if (dr.have_loc) {
+        d.printf("DRONE: %.5f, %.5f", dr.lat_deg, dr.lon_deg);
+    } else {
+        d.print("DRONE: (location pending)");
+    }
+
+    d.setTextColor(T_WARN, T_BG);
+    d.setCursor(4, BODY_Y + 52);
+    d.printf("ALT: %-4.0fm  SPD: %-4.1fm/s  HDG: %-3.0f°", (double)dr.alt_m, (double)dr.speed_ms, (double)dr.track_deg);
+
+    d.setTextColor(T_BAD, T_BG);
+    d.setCursor(4, BODY_Y + 64);
+    if (dr.have_op) {
+        d.printf("PILOT: %.5f, %.5f", dr.op_lat_deg, dr.op_lon_deg);
+    } else {
+        d.print("PILOT: (operator GPS not broadcast)");
+    }
+
+    uint32_t age = (millis() - dr.last_ms) / 1000;
+    d.setTextColor(T_DIM, T_BG);
+    d.setCursor(4, BODY_Y + 76);
+    d.printf("Last beacon: %lu sec ago", (unsigned long)age);
+
+    ui_draw_footer("`=back to list");
+    sfx_select();
+
+    while (true) {
+        uint16_t k = input_poll();
+        if (k == PK_NONE) { delay(20); continue; }
+        if (k == PK_ESC) break;
+    }
+}
+
 void feat_drone_remoteid(void)
 {
     if (!sd_mount() && !sd_remount()) {
@@ -244,9 +287,6 @@ void feat_drone_remoteid(void)
     }
     NimBLEScan *scan = NimBLEDevice::getScan();
     scan->setScanCallbacks(&s_cb, false);
-    /* POS-AUDIT-011: callback-only, store nothing. This is a forever scan
-     * (duration 0) with duplicates on — without this NimBLE accumulates every
-     * advert unbounded and reboots the device after a few hundred. */
     scan->setMaxResults(0);
     scan->setActiveScan(false);
     scan->setInterval(97);
@@ -261,53 +301,81 @@ void feat_drone_remoteid(void)
 
     auto &d = M5Cardputer.Display;
     ui_clear_body();
-    ui_draw_footer("ESC=stop  passive Remote ID listener");
+    ui_draw_footer(";/.=move  ENTER=details  `=stop");
 
+    int cursor = 0;
     uint32_t last_redraw = 0;
-    bool dirty = true;
     int last_count = -1;
+    int last_cursor = -1;
+
     while (true) {
         uint32_t now = millis();
-        if (now - last_redraw > 400) {
+        if (now - last_redraw > 300) {
             last_redraw = now;
             ui_draw_status(radio_name(), "drone RID");
 
-            if (dirty || s_drone_count != last_count) {
+            if (s_drone_count != last_count || cursor != last_cursor) {
+                last_count = s_drone_count;
+                last_cursor = cursor;
+
                 ui_clear_body();
                 d.setTextColor(T_ACCENT, T_BG);
                 d.setCursor(4, BODY_Y + 2); d.print("DRONE REMOTE ID");
                 d.setTextColor(T_DIM, T_BG);
-                d.setCursor(SCR_W - 60, BODY_Y + 2);
+                d.setCursor(SCR_W - 74, BODY_Y + 2);
                 d.printf("%d targets", s_drone_count);
                 d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
-                dirty = false;
-                last_count = s_drone_count;
-            }
 
-            if (s_drone_count == 0) {
-                ui_scanning_indicator("waiting for drones", s_drone_count);
-            } else {
-                int rows = 5;
-                for (int i = 0; i < rows && i < s_drone_count; i++) {
-                    const drone_t &dr = s_drones[i];
-                    int y = BODY_Y + 18 + i * 18;
-                    d.setTextColor(T_FG, T_BG);
-                    d.setCursor(4, y);
-                    d.printf("%-20s %4d", dr.uas_id[0] ? dr.uas_id : "<no-id>", (int)dr.rssi);
+                if (s_drone_count == 0) {
                     d.setTextColor(T_DIM, T_BG);
-                    d.setCursor(4, y + 8);
-                    if (dr.have_loc) {
-                        d.printf("%.4f,%.4f alt%.0fm",
-                                 dr.lat_deg, dr.lon_deg, dr.alt_m);
-                    } else {
-                        d.print("(location pending)");
+                    d.setCursor(4, BODY_Y + 26);
+                    d.print("Listening on 2.4GHz for FAA Part 89");
+                    d.setCursor(4, BODY_Y + 38);
+                    d.print("ASTM F3411-22a broadcasts...");
+                } else {
+                    int rows = 4;
+                    if (cursor >= s_drone_count) cursor = s_drone_count - 1;
+                    if (cursor < 0) cursor = 0;
+
+                    for (int i = 0; i < rows && i < s_drone_count; i++) {
+                        const drone_t &dr = s_drones[i];
+                        int y = BODY_Y + 16 + i * 19;
+                        bool sel = (i == cursor);
+                        if (sel) d.fillRect(0, y - 1, SCR_W, 18, 0x18C7);
+                        uint16_t bg = sel ? 0x18C7 : T_BG;
+
+                        d.setTextColor(sel ? T_ACCENT : T_FG, bg);
+                        d.setCursor(4, y);
+                        d.printf("%-18.18s", dr.uas_id[0] ? dr.uas_id : "<unregistered>");
+
+                        d.setTextColor(sel ? 0xFFFF : T_GOOD, bg);
+                        d.setCursor(154, y);
+                        d.printf("%4ddBm", (int)dr.rssi);
+
+                        d.setTextColor(T_DIM, bg);
+                        d.setCursor(4, y + 9);
+                        if (dr.have_loc) {
+                            d.printf("%.4f,%.4f %-3.0fm %-2.0fm/s",
+                                     dr.lat_deg, dr.lon_deg, (double)dr.alt_m, (double)dr.speed_ms);
+                        } else {
+                            d.print("(position pending)");
+                        }
                     }
                 }
             }
         }
+        if (s_drone_count == 0) ui_scanning_indicator("waiting for drones", s_drone_count);
+
         uint16_t k = input_poll();
-        if (k == PK_NONE) { delay(30); continue; }
+        if (k == PK_NONE) { delay(25); continue; }
         if (k == PK_ESC) break;
+        if (k == ';' || k == PK_UP)   { if (cursor > 0) cursor--; }
+        if (k == '.' || k == PK_DOWN) { if (cursor + 1 < s_drone_count) cursor++; }
+        if (k == PK_ENTER && s_drone_count > 0 && cursor < s_drone_count) {
+            show_drone_detail(s_drones[cursor]);
+            last_count = last_cursor = -1;
+            ui_draw_footer(";/.=move  ENTER=details  `=stop");
+        }
     }
 
     scan->stop();

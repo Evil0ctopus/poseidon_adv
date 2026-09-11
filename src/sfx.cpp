@@ -51,9 +51,10 @@ static void sfx_player_task(void *);  /* fwd: defined after play_X */
  * power-loss — writes via putUChar / putBool sat in the in-RAM cache
  * because we never called .end() to flush. Now every read/write opens
  * → operates → closes, matching theme.cpp's pattern. */
-static uint8_t s_volume = 5;     /* 0..10 user-facing */
-static bool    s_mute = false;
-static bool    s_inited = false;
+static uint8_t       s_volume = 5;     /* 0..10 user-facing */
+static bool          s_mute = false;
+static sfx_profile_t s_profile = SFX_PROFILE_CYBERPUNK;
+static bool          s_inited = false;
 
 static inline uint8_t user_to_m5(uint8_t u)
 {
@@ -76,8 +77,10 @@ void sfx_init(void)
     if (s_inited) return;             /* idempotent — header says safe to call multiple times */
     Preferences p;
     if (p.begin("sfx", false)) {
-        s_volume = p.getUChar("vol", 5);
-        s_mute   = p.getBool("mute", false);
+        s_volume  = p.getUChar("vol", 5);
+        s_mute    = p.getBool("mute", false);
+        uint8_t pr = p.getUChar("prof", (uint8_t)SFX_PROFILE_CYBERPUNK);
+        if (pr < SFX_PROFILE_COUNT) s_profile = (sfx_profile_t)pr;
         p.end();
     }
     if (s_volume > 10) s_volume = 10;
@@ -95,6 +98,32 @@ void sfx_init(void)
         }
     }
     s_inited = true;
+}
+
+void sfx_set_profile(sfx_profile_t pr)
+{
+    if (pr >= SFX_PROFILE_COUNT) pr = SFX_PROFILE_CYBERPUNK;
+    s_profile = pr;
+    if (s_inited) {
+        Preferences p;
+        if (p.begin("sfx", false)) {
+            p.putUChar("prof", (uint8_t)pr);
+            p.end();
+        }
+    }
+}
+
+sfx_profile_t sfx_get_profile(void) { return s_profile; }
+
+const char *sfx_profile_name(sfx_profile_t pr)
+{
+    switch (pr) {
+    case SFX_PROFILE_CYBERPUNK:  return "CYBERPUNK";
+    case SFX_PROFILE_RETRO_8BIT: return "RETRO 8-BIT";
+    case SFX_PROFILE_MINIMAL:    return "MINIMAL";
+    case SFX_PROFILE_SDR_RADIO:  return "SDR RADIO";
+    default:                     return "UNKNOWN";
+    }
 }
 
 void sfx_set_volume(uint8_t vol)
@@ -169,82 +198,187 @@ static void sweep(int f0, int f1, int dur_ms)
     }
 }
 
-/* ========== UI cues — digital / Tron (player-task impls) ========== */
+/* ========== UI cues — per profile implementation ========== */
 
 static void play_click(void)
 {
-    /* Short digital tick — reliably audible. 8ms with a descending second
-     * tone. Previous 2ms × 2-stacked was below the M5 speaker's floor and
-     * got clipped. */
-    note(2800, 6);
-    delay(3);
-    note(2200, 5);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        /* Classic NES 8-bit coin tick (B6 -> E7) */
+        note(1975, 12);
+        delay(3);
+        note(2637, 16);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        /* High-precision clean tick */
+        note(3200, 6);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        /* 1750 Hz CW telegraph Dit */
+        note(1750, 16);
+    } else {
+        /* Default Cyberpunk Tron click */
+        note(2800, 6);
+        delay(3);
+        note(2200, 5);
+    }
 }
 
 static void play_select(void)
 {
-    /* Short descending activation glide — the Tron "acknowledge". */
-    sweep(3800, 2400, 45);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        /* 8-bit power-up arpeggio (G6 -> C7 -> E7) */
+        note(1568, 18); delay(4);
+        note(2093, 20); delay(4);
+        note(2637, 30);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        note(2600, 12); delay(4);
+        note(3400, 16);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        /* Morse Dit-Dah */
+        note(1750, 16); delay(12);
+        note(1750, 42);
+    } else {
+        sweep(3800, 2400, 45);
+    }
 }
 
 static void play_back(void)
 {
-    /* Quick sweep-down-then-tail — decisive disengagement. */
-    sweep(2800, 1400, 35);
-    delay(4);
-    note(900, 15);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        /* 8-bit warp down (E7 -> C7 -> G6) */
+        note(2637, 18); delay(4);
+        note(2093, 20); delay(4);
+        note(1568, 28);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        note(3200, 10); delay(4);
+        note(2200, 14);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        /* Morse Dah-Dit */
+        note(1750, 42); delay(12);
+        note(1750, 16);
+    } else {
+        sweep(2800, 1400, 35);
+        delay(4);
+        note(1600, 20);
+    }
 }
 
 static void play_error(void)
 {
-    /* Broken-modem: low buzz + harsh noise burst. */
-    note(220, 35); delay(5);
-    note(180, 45); delay(5);
-    sweep(400, 140, 60);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        note(440, 50); delay(10);
+        note(330, 70);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        note(600, 25); delay(6);
+        note(400, 35);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        note(650, 40); delay(8);
+        note(550, 60);
+    } else {
+        note(350, 35); delay(5);
+        note(280, 45); delay(5);
+        sweep(800, 250, 60);
+    }
 }
 
 static void play_toast(void)
 {
-    /* Soft digital chirp — subtle info cue. */
-    sweep(2400, 3200, 22);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        note(2093, 16); delay(6);
+        note(2793, 30);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        note(3000, 12);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        note(1500, 16); delay(6);
+        note(1900, 24);
+    } else {
+        sweep(2400, 3200, 25);
+    }
 }
 
-/* ========== attack cues — cyberpunk ========== */
+/* ========== attack cues — cyberpunk & profile-tuned ========== */
 
 static void play_scan_start(void)
 {
-    /* Data-link initializing: dual-sweep up then lock. */
-    sweep(400, 2800, 90);
-    delay(10);
-    note(3600, 20);
-    note(2800, 20);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        note(1318, 22); delay(5);
+        note(1568, 22); delay(5);
+        note(2093, 32);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        note(2400, 18); delay(8);
+        note(3200, 22);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        note(1400, 30); delay(8);
+        note(1750, 40);
+    } else {
+        sweep(400, 2800, 90);
+        delay(10);
+        note(3600, 20);
+        note(2800, 20);
+    }
 }
 
 static void play_scan_hit(void)
 {
-    /* Target acquired — bright ping with sweep-up tail. */
-    note(3800, 10);
-    sweep(3800, 5200, 35);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        /* High 8-bit coin jingle */
+        note(2093, 18); delay(6);
+        note(3136, 40);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        note(3200, 14); delay(6);
+        note(3800, 18);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        /* Roger Beep */
+        note(2100, 22); delay(8);
+        note(1680, 38);
+    } else {
+        note(3800, 10);
+        sweep(3800, 5200, 35);
+    }
 }
 
 static void play_deauth_burst(void)
 {
-    /* Aggressive rising zap + industrial hit. Hard, mean. */
-    sweep(200, 2400, 60);
-    delay(3);
-    note(1200, 40);
-    delay(3);
-    note(600, 30);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        note(880, 20); delay(5);
+        note(440, 25); delay(5);
+        note(220, 35);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        note(1200, 20); delay(6);
+        note(800, 30);
+    } else {
+        sweep(200, 2400, 60);
+        delay(3);
+        note(1200, 40);
+        delay(3);
+        note(600, 30);
+    }
 }
 
 static void play_capture(void)
 {
-    /* Bright glitch-into-chord — data acquired. */
-    const int freqs[4] = { 3200, 1800, 4200, 2600 };
-    for (int i = 0; i < 4; i++) { note(freqs[i], 18); delay(10); }
-    delay(8);
-    const int chord_notes[3] = { 2400, 3200, 4000 };
-    chord(chord_notes, 3, 120);
+    if (s_profile == SFX_PROFILE_RETRO_8BIT) {
+        /* Stage Clear Victory Jingle */
+        note(1568, 25); delay(6);
+        note(2093, 25); delay(6);
+        note(2637, 30); delay(8);
+        note(3136, 60);
+    } else if (s_profile == SFX_PROFILE_MINIMAL) {
+        note(2400, 25); delay(8);
+        note(3200, 35); delay(8);
+        note(4000, 45);
+    } else if (s_profile == SFX_PROFILE_SDR_RADIO) {
+        /* Telemetry Sync Sequence */
+        note(1500, 20); delay(6);
+        note(1750, 20); delay(6);
+        note(2100, 30); delay(6);
+        note(2500, 45);
+    } else {
+        /* Bright glitch-into-chord — data acquired. */
+        const int freqs[4] = { 3200, 1800, 4200, 2600 };
+        for (int i = 0; i < 4; i++) { note(freqs[i], 18); delay(10); }
+        delay(8);
+        const int chord_notes[3] = { 2400, 3200, 4000 };
+        chord(chord_notes, 3, 120);
+    }
 }
 
 static void play_hs_capture(void)

@@ -27,6 +27,7 @@
 #include "wdr_mood.h"
 #include "wdr_matrix.h"
 #include "../sfx.h"
+#include "../sigdb_surveillance.h"
 #include "../heap_budget.h"
 
 static portMUX_TYPE s_wdr_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -65,12 +66,29 @@ enum wdr_view_t { WDR_VIEW_ARGUS = 0, WDR_VIEW_PLAIN = 1, WDR_VIEW_MATRIX = 2, W
 #define MX_SEED 5   /* recent APs to preload into the matrix roster on entry */
 static wdr_view_t s_view = WDR_VIEW_ARGUS;
 static volatile int s_new_this_run = 0;   /* distinct new APs this session */
+static volatile int s_surv_count = 0;     /* surveillance hits (Flock/Raven) */
+static volatile bool s_surv_pending = false;
+static char s_last_surv_name[33] = {0};
+static surv_class_t s_last_surv_cls = SURV_UNKNOWN;
+static uint32_t s_last_surv_ms = 0;
 static uint32_t s_entry_ms = 0;           /* millis() at feature start */
 static volatile uint32_t s_last_new_ms = 0;      /* millis() of most recent new AP */
 static volatile bool     s_gps_ever_locked = false;
 static volatile bool     s_juicy_pending = false; /* set in RX cb, consumed in UI loop */
 static volatile uint32_t s_cache_rollovers = 0;
 static volatile int      s_last_new_idx = -1;
+
+static inline const char *surv_tag_str(surv_class_t cls, const char *ssid)
+{
+    if (cls == SURV_FLOCK_T1) return "FLOCK T1";
+    if (cls == SURV_FLOCK_T2) return "FLOCK T2";
+    if (cls == SURV_FLOCK_SSID) {
+        if (istrstr_local(ssid, "raven")) return "RAVEN SENSOR";
+        return "FLOCK CAMERA";
+    }
+    if (cls == SURV_FLOCK_PROBE) return "FLOCK PROBE";
+    return "SURVEILLANCE";
+}
 
 static int find_ap(const uint8_t *bssid)
 {
@@ -223,6 +241,7 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     int idx = find_ap(bssid);
     bool is_new_ap = false;
     if (idx < 0) {
+        is_new_ap = true;
         if (s_ap_count >= WARDRIVE_MAX_APS) {
             /* The CSV is the durable capture. Reuse the oldest entry only
              * after its pending row has been flushed, so a full cache does
@@ -241,9 +260,9 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
             }
             idx = victim;
             s_cache_rollovers++;
-            is_new_ap = true;
+        } else {
+            idx = s_ap_count++;
         }
-        if (idx < 0) idx = s_ap_count++;
         memset(&s_aps[idx], 0, sizeof(wdr_ap_t));
         memcpy(s_aps[idx].bssid, bssid, 6);
         s_aps[idx].first_seen_ms = millis();
@@ -297,6 +316,16 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         s_last_new_idx = idx;
         s_new_this_run++;
         s_last_new_ms = millis();
+        surv_class_t scls = flock_classify_oui(bssid);
+        if (scls == SURV_UNKNOWN && a.ssid[0]) scls = flock_classify_ssid(a.ssid);
+        if (scls != SURV_UNKNOWN) {
+            s_surv_count++;
+            s_surv_pending = true;
+            s_last_surv_cls = scls;
+            s_last_surv_ms = millis();
+            strncpy((char*)s_last_surv_name, a.ssid[0] ? a.ssid : surv_tag_str(scls, ""), sizeof(s_last_surv_name) - 1);
+            s_last_surv_name[sizeof(s_last_surv_name) - 1] = 0;
+        }
         if (auth == WIFI_AUTH_OPEN || auth == WIFI_AUTH_WPA3_PSK) s_juicy_pending = true;
     }
 
@@ -409,6 +438,16 @@ static void merge_c5_5g(void)
             s_5g_count++;
             s_new_this_run++;
             s_last_new_ms = millis();
+            surv_class_t scls = flock_classify_oui(buf[i].bssid);
+            if (scls == SURV_UNKNOWN && buf[i].ssid[0]) scls = flock_classify_ssid(buf[i].ssid);
+            if (scls != SURV_UNKNOWN) {
+                s_surv_count++;
+                s_surv_pending = true;
+                s_last_surv_cls = scls;
+                s_last_surv_ms = millis();
+                strncpy((char*)s_last_surv_name, buf[i].ssid[0] ? buf[i].ssid : surv_tag_str(scls, ""), sizeof(s_last_surv_name) - 1);
+                s_last_surv_name[sizeof(s_last_surv_name) - 1] = 0;
+            }
             if (buf[i].auth == WIFI_AUTH_OPEN || buf[i].auth == WIFI_AUTH_WPA3_PSK)
                 s_juicy_pending = true;
         }
@@ -425,8 +464,8 @@ static void draw_plain_view(bool &dirty)
         dirty = false;
     }
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(4, BODY_Y + 18); d.printf("APs: %-5d  5G: %-4d", s_new_this_run, s_5g_count);
-    d.setCursor(4, BODY_Y + 30); d.printf("Beacons: %-7lu",  (unsigned long)s_beacons);
+    d.setCursor(4, BODY_Y + 18); d.printf("APs:%-5d 5G:%-3d Surv:%-3d", s_ap_count, s_5g_count, s_surv_count);
+    d.setCursor(4, BODY_Y + 30); d.printf("Beacons:%-7lu new:%-5d", (unsigned long)s_beacons, s_new_this_run);
     d.setCursor(4, BODY_Y + 42); d.printf("Channel: %-2u  C5:%-3s",
                                           s_current_ch, c5_any_online() ? "on" : "off");
     const gps_fix_t &g = gps_get();
@@ -434,8 +473,17 @@ static void draw_plain_view(bool &dirty)
     d.setCursor(4, BODY_Y + 54);
     if (g.valid) d.printf("GPS: %.4f, %.4f (%d sats)   ", g.lat_deg, g.lon_deg, g.sats);
     else         d.printf("GPS: waiting for fix...      ");
-    d.setTextColor(T_DIM, T_BG);
-    d.setCursor(4, BODY_Y + 70); d.printf("%-30s", s_csv_path);
+
+    uint32_t now = millis();
+    if (now - s_last_surv_ms < 4000 && s_last_surv_name[0]) {
+        d.setTextColor(T_BAD, T_BG);
+        d.setCursor(4, BODY_Y + 70);
+        d.printf("[!] SURV: %-23.23s", s_last_surv_name);
+    } else {
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(4, BODY_Y + 70);
+        d.printf("%-30s", s_csv_path);
+    }
 }
 
 static void draw_argus_view(argus_mood_t base, bool &dirty)
@@ -452,7 +500,7 @@ static void draw_argus_view(argus_mood_t base, bool &dirty)
 
     const int rx = 110;            /* right stat column */
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(rx, BODY_Y + 2);  d.printf("APs %-5d", s_new_this_run);
+    d.setCursor(rx, BODY_Y + 2);  d.printf("APs %-5d", s_ap_count);
     d.setCursor(rx, BODY_Y + 14); d.printf("new %-5d", s_new_this_run);
     d.setCursor(rx, BODY_Y + 26); d.printf("bcn %-6lu", (unsigned long)s_beacons);
     /* ch + 5G count (magenta when a C5 satellite is feeding us) + C5 pip */
@@ -463,15 +511,27 @@ static void draw_argus_view(argus_mood_t base, bool &dirty)
     d.setTextColor(c5on ? T_GOOD : T_DIM, T_BG);    d.printf("C5%c", c5on ? '*' : '.');
 
     const gps_fix_t &g = gps_get();
-    d.setTextColor(g.valid ? T_GOOD : T_DIM, T_BG);
     d.setCursor(rx, BODY_Y + 50);
-    if (g.valid) d.printf("GPS %c%-2d ", '*', g.sats);
-    else         d.printf("no fix   ");
+    d.setTextColor(g.valid ? T_GOOD : T_DIM, T_BG);
+    d.printf("GPS%c%-2d", g.valid ? '*' : '.', g.sats);
+    if (s_surv_count > 0) {
+        d.setTextColor(T_BAD, T_BG);
+        d.printf(" !%-2d", s_surv_count);
+    } else {
+        d.setTextColor(T_DIM, T_BG);
+        d.print("    ");
+    }
 
-    d.setTextColor(T_DIM, T_BG);
+    uint32_t now = millis();
     d.setCursor(rx, BODY_Y + 62);
-    if (g.valid) d.printf("%-14s", s_csv_path + 10);  /* skip "/poseidon/" prefix */
-    else         d.printf("holding rows ");
+    if (now - s_last_surv_ms < 4000 && s_last_surv_name[0]) {
+        d.setTextColor(T_BAD, T_BG);
+        d.printf("!%.13s", s_last_surv_name);
+    } else {
+        d.setTextColor(T_DIM, T_BG);
+        if (g.valid) d.printf("%-14s", s_csv_path + 10);  /* skip "/poseidon/" prefix */
+        else         d.printf("holding rows ");
+    }
 }
 
 void feat_wifi_wardrive(void)
@@ -519,6 +579,11 @@ void feat_wifi_wardrive(void)
     s_current_ch = 1;
     s_5g_count = 0;
     s_new_this_run = 0;
+    s_surv_count = 0;
+    s_surv_pending = false;
+    s_last_surv_name[0] = 0;
+    s_last_surv_cls = SURV_UNKNOWN;
+    s_last_surv_ms = 0;
     s_last_new_idx = -1;
     s_entry_ms = millis();
 
@@ -613,8 +678,12 @@ void feat_wifi_wardrive(void)
                     portEXIT_CRITICAL(&s_wdr_mux);
                     if (ss[0] == 0) snprintf(ss, sizeof(ss), "<hidden %02X:%02X>", bb[4], bb[5]);
                     bool juicy = (au == WIFI_AUTH_OPEN || au == WIFI_AUTH_WPA3_PSK);
-                    if (s_view == WDR_VIEW_MATRIX) wdr_matrix_feed(ss, au, rs, ch);
-                    if (juicy) sfx_glitch();
+                    surv_class_t scls = flock_classify_oui(bb);
+                    if (scls == SURV_UNKNOWN && ss[0]) scls = flock_classify_ssid(ss);
+                    const char *stag = (scls != SURV_UNKNOWN) ? surv_tag_str(scls, ss) : nullptr;
+                    if (s_view == WDR_VIEW_MATRIX) wdr_matrix_feed(ss, au, rs, ch, stag);
+                    if (stag) sfx_alert();
+                    else if (juicy) sfx_glitch();
                 }
                 mx_prev_apc = apc;
             } else if (s_new_this_run > mx_prev_new && s_last_new_idx >= 0) {
@@ -629,13 +698,23 @@ void feat_wifi_wardrive(void)
                 memcpy(bb, s_aps[i].bssid, 6);
                 portEXIT_CRITICAL(&s_wdr_mux);
                 if (ss[0] == 0) snprintf(ss, sizeof(ss), "<hidden %02X:%02X>", bb[4], bb[5]);
-                if (s_view == WDR_VIEW_MATRIX) wdr_matrix_feed(ss, au, rs, ch);
+                bool juicy = (au == WIFI_AUTH_OPEN || au == WIFI_AUTH_WPA3_PSK);
+                surv_class_t scls = flock_classify_oui(bb);
+                if (scls == SURV_UNKNOWN && ss[0]) scls = flock_classify_ssid(ss);
+                const char *stag = (scls != SURV_UNKNOWN) ? surv_tag_str(scls, ss) : nullptr;
+                if (s_view == WDR_VIEW_MATRIX) wdr_matrix_feed(ss, au, rs, ch, stag);
+                if (stag) sfx_alert();
+                else if (juicy) sfx_glitch();
             }
             mx_prev_new = s_new_this_run;
 
-            /* Consume the ISR juicy flag every frame so it can't go stale and
-             * strobe on a later view switch; only Argus reacts to it. */
+            /* Consume the ISR juicy flag and surveillance flag. */
             bool juicy_flash = s_juicy_pending; s_juicy_pending = false;
+            bool surv_flash  = s_surv_pending;  s_surv_pending  = false;
+            if (surv_flash) {
+                sfx_alert();
+                argus_flash(ARGUS_OLD_FURY, 1600);
+            }
 
             /* C5 satellite came online -> one celebration flash + sound cue. */
             bool c5_now = c5_any_online();

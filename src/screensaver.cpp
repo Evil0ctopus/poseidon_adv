@@ -1011,6 +1011,219 @@ static void run_tide_waves(void)
     }
 }
 
+/* ============ POSEIDON: SATCOM SKYPLOT ============ */
+
+struct sat_sim_t {
+    float az;
+    float el;
+    float speed_az;
+    float speed_el;
+    const char *name;
+    uint16_t color;
+};
+
+static void run_sat_skyplot(void)
+{
+    auto &d = M5Cardputer.Display;
+    const int cx = 68;
+    const int cy = SCR_H / 2 + 4;
+    const int rmax = 52;
+
+    sat_sim_t sats[] = {
+        {  45.0f, 60.0f, 0.4f, -0.1f, "ISS (ZARYA)",  T_GOOD },
+        { 180.0f, 30.0f, -0.3f, 0.2f, "NOAA-19",      T_ACCENT },
+        { 290.0f, 45.0f, 0.5f,  0.1f, "METEOR-M2",    T_WARN },
+        { 110.0f, 15.0f, -0.2f, -0.1f,"IRIDIUM 91",   T_ACCENT2 },
+        { 340.0f, 75.0f, 0.3f, -0.2f, "STARLINK-411", T_FG },
+    };
+    const int N_SATS = sizeof(sats) / sizeof(sats[0]);
+
+    while (input_poll() == PK_NONE) {
+        d.fillScreen(T_BG);
+
+        /* Title / HUD Header */
+        d.setTextColor(T_ACCENT, T_BG);
+        d.setCursor(2, 2); d.print("SATCOM // skyplot");
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(SCR_W - 74, 2); d.print("TLE track");
+        d.drawFastHLine(0, 11, SCR_W, T_DIM);
+
+        /* Polar Skyplot Rings (90 deg center, 0 deg horizon) */
+        d.drawCircle(cx, cy, rmax,         0x2124);
+        d.drawCircle(cx, cy, rmax * 2 / 3, 0x2124);
+        d.drawCircle(cx, cy, rmax / 3,     0x2124);
+        d.drawFastHLine(cx - rmax, cy, rmax * 2, 0x2124);
+        d.drawFastVLine(cx, cy - rmax, rmax * 2, 0x2124);
+
+        /* Cardinal points */
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(cx - 2, cy - rmax - 8); d.print("N");
+        d.setCursor(cx - 2, cy + rmax + 2); d.print("S");
+        d.setCursor(cx + rmax + 3, cy - 3); d.print("E");
+        d.setCursor(cx - rmax - 8, cy - 3); d.print("W");
+
+        /* Right telemetry pane */
+        int rx = 132;
+        d.setTextColor(T_ACCENT, T_BG);
+        d.setCursor(rx, BODY_Y + 4); d.print("TRACKING SATS:");
+        d.drawFastHLine(rx, BODY_Y + 14, SCR_W - rx - 2, T_ACCENT2);
+
+        for (int i = 0; i < N_SATS; ++i) {
+            sat_sim_t &s = sats[i];
+            s.az += s.speed_az;
+            if (s.az >= 360.0f) s.az -= 360.0f;
+            if (s.az < 0.0f)    s.az += 360.0f;
+
+            s.el += s.speed_el;
+            if (s.el > 88.0f || s.el < 10.0f) s.speed_el = -s.speed_el;
+
+            /* Polar projection: r = rmax * (90 - el) / 90 */
+            float rad = (s.az - 90.0f) * (float)M_PI / 180.0f;
+            float r = rmax * (90.0f - s.el) / 90.0f;
+            int px = cx + (int)(cosf(rad) * r);
+            int py = cy + (int)(sinf(rad) * r);
+
+            /* Plot satellite pip */
+            d.fillCircle(px, py, 2, s.color);
+            d.drawCircle(px, py, 4, (millis() / 200 + i) % 2 ? s.color : T_BG);
+
+            /* Telemetry list */
+            int ty = BODY_Y + 18 + i * 16;
+            d.setTextColor(s.color, T_BG);
+            d.setCursor(rx, ty);
+            d.printf("%.13s", s.name);
+            d.setTextColor(T_DIM, T_BG);
+            d.setCursor(rx, ty + 8);
+            d.printf("Az:%3.0f El:%2.0f", s.az, s.el);
+        }
+
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(2, SCR_H - 9); d.print("// any key to wake");
+        delay(40);
+    }
+}
+
+/* ============ POSEIDON: RF WATERFALL ============ */
+
+#define RF_BINS 40
+#define RF_HIST 14
+
+static void run_rf_waterfall(void)
+{
+    auto &d = M5Cardputer.Display;
+    int8_t hist[RF_HIST][RF_BINS];
+    memset(hist, -100, sizeof(hist));
+    int head = 0;
+
+    int col_w = SCR_W / RF_BINS;  /* 6 px */
+
+    while (input_poll() == PK_NONE) {
+        /* Generate synthetic RF noise + burst transmissions */
+        head = (head + 1) % RF_HIST;
+        for (int b = 0; b < RF_BINS; ++b) {
+            int8_t noise = -95 + (int8_t)(esp_random() % 15);
+            /* Random bursts on specific channels */
+            if ((esp_random() % 40) == 0) noise = -40 - (int8_t)(esp_random() % 20);
+            hist[head][b] = noise;
+        }
+
+        d.fillScreen(T_BG);
+
+        /* Top spectrum power line */
+        d.setTextColor(T_ACCENT, T_BG);
+        d.setCursor(2, 2); d.print("SDR // waterfall");
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(SCR_W - 84, 2); d.print("2.4GHz FFT");
+        d.drawFastHLine(0, 11, SCR_W, T_DIM);
+
+        /* Waterfall rows */
+        int start_y = 14;
+        for (int r = 0; r < RF_HIST; ++r) {
+            int idx = (head - r + RF_HIST) % RF_HIST;
+            int y = start_y + r * 7;
+            for (int b = 0; b < RF_BINS; ++b) {
+                int8_t sig = hist[idx][b];
+                uint16_t c;
+                if      (sig > -45) c = T_BAD;
+                else if (sig > -60) c = T_WARN;
+                else if (sig > -75) c = T_GOOD;
+                else if (sig > -90) c = T_ACCENT;
+                else                c = 0x1123; /* cool dark */
+                d.fillRect(b * col_w, y, col_w - 1, 6, c);
+            }
+        }
+
+        /* Bottom frequency markers */
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(2, SCR_H - 10);
+        d.print("2412MHz          2437MHz          2462MHz");
+
+        delay(50);
+    }
+}
+
+/* ============ POSEIDON: STARFIELD WARP ============ */
+
+#define N_STARS 50
+
+struct star_t {
+    float x, y, z;
+};
+
+static void run_starfield_warp(void)
+{
+    auto &d = M5Cardputer.Display;
+    star_t stars[N_STARS];
+    const int cx = SCR_W / 2;
+    const int cy = SCR_H / 2;
+
+    for (int i = 0; i < N_STARS; ++i) {
+        stars[i].x = (float)(-100 + (int)(esp_random() % 200));
+        stars[i].y = (float)(-60 + (int)(esp_random() % 120));
+        stars[i].z = (float)(10 + (int)(esp_random() % 100));
+    }
+
+    while (input_poll() == PK_NONE) {
+        d.fillScreen(T_BG);
+
+        /* HUD title */
+        d.setTextColor(T_ACCENT2, T_BG);
+        d.setCursor(2, 2); d.print("WARP // hyperspace");
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(SCR_W - 74, 2); d.print("v=0.99c");
+        d.drawFastHLine(0, 11, SCR_W, T_DIM);
+
+        for (int i = 0; i < N_STARS; ++i) {
+            stars[i].z -= 2.5f;
+            if (stars[i].z <= 1.0f) {
+                stars[i].x = (float)(-100 + (int)(esp_random() % 200));
+                stars[i].y = (float)(-60 + (int)(esp_random() % 120));
+                stars[i].z = 100.0f;
+            }
+
+            float k = 80.0f / stars[i].z;
+            int px = cx + (int)(stars[i].x * k);
+            int py = cy + (int)(stars[i].y * k);
+
+            if (px >= 0 && px < SCR_W && py >= 12 && py < SCR_H - 1) {
+                uint16_t col;
+                if      (stars[i].z < 25.0f) col = 0xFFFF;
+                else if (stars[i].z < 50.0f) col = T_ACCENT;
+                else if (stars[i].z < 75.0f) col = T_ACCENT2;
+                else                         col = T_DIM;
+
+                int size = (stars[i].z < 30.0f) ? 2 : 1;
+                if (size == 1) d.drawPixel(px, py, col);
+                else           d.fillRect(px, py, 2, 2, col);
+            }
+        }
+
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(2, SCR_H - 9); d.print("// any key to exit");
+        delay(30);
+    }
+}
+
 /* ============ POOL TABLE + DISPATCHER ============ */
 
 typedef void (*screensaver_fn)(void);
@@ -1027,6 +1240,9 @@ static const screensaver_def_t s_pool[] = {
     { "NEURAL ARC",     run_neural_arc      },
     { "GLITCH BSOD",    run_glitch_bsod     },
     { "TIDE WAVES",     run_tide_waves      },
+    { "SAT SKYPLOT",    run_sat_skyplot     },
+    { "RF WATERFALL",   run_rf_waterfall    },
+    { "STARFIELD WARP", run_starfield_warp  },
 };
 static const int POOL_N = (int)(sizeof(s_pool) / sizeof(s_pool[0]));
 

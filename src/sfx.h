@@ -28,6 +28,19 @@ uint8_t sfx_get_volume(void);
 void sfx_set_mute(bool on);
 bool sfx_is_muted(void);
 
+/* Sound profiles */
+enum sfx_profile_t : uint8_t {
+    SFX_PROFILE_CYBERPUNK = 0,
+    SFX_PROFILE_RETRO_8BIT,
+    SFX_PROFILE_MINIMAL,
+    SFX_PROFILE_SDR_RADIO,
+    SFX_PROFILE_COUNT
+};
+
+void sfx_set_profile(sfx_profile_t p);
+sfx_profile_t sfx_get_profile(void);
+const char *sfx_profile_name(sfx_profile_t p);
+
 /* UI / navigation cues — very short, low pitch, unobtrusive */
 void sfx_click(void);    /* any key press — global hook */
 void sfx_select(void);   /* ENTER on a menu item */

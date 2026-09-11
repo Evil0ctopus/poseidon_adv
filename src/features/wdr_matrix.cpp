@@ -113,7 +113,7 @@ void wdr_matrix_begin(void)
     M5Cardputer.Display.fillScreen(T_BG);
 }
 
-void wdr_matrix_feed(const char *ssid, uint8_t auth, int8_t rssi, uint8_t channel)
+void wdr_matrix_feed(const char *ssid, uint8_t auth, int8_t rssi, uint8_t channel, const char *surv_label)
 {
     if (mxr_pend_n < MX_PEND) {
         mx_pend_t &p = mxr_pend[mxr_pend_tail];
@@ -122,7 +122,14 @@ void wdr_matrix_feed(const char *ssid, uint8_t auth, int8_t rssi, uint8_t channe
         mxr_pend_tail = (mxr_pend_tail + 1) % MX_PEND;
         mxr_pend_n++;
     }
-    if (auth == WIFI_AUTH_OPEN || auth == WIFI_AUTH_WPA3_PSK) {
+    if (surv_label && surv_label[0]) {
+        strncpy(mxr_note_tag, surv_label, sizeof(mxr_note_tag) - 1);
+        mxr_note_tag[sizeof(mxr_note_tag) - 1] = 0;
+        strncpy(mxr_note_ssid, ssid, sizeof(mxr_note_ssid) - 1);
+        mxr_note_ssid[sizeof(mxr_note_ssid) - 1] = 0;
+        mxr_note_col   = T_BAD;
+        mxr_note_until = millis() + 2500;
+    } else if (auth == WIFI_AUTH_OPEN || auth == WIFI_AUTH_WPA3_PSK) {
         bool open = (auth == WIFI_AUTH_OPEN);
         strncpy(mxr_note_tag, open ? "OPEN NET" : "WPA3 SAE", sizeof(mxr_note_tag) - 1);
         mxr_note_tag[sizeof(mxr_note_tag) - 1] = 0;

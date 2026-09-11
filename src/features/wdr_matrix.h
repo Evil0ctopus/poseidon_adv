@@ -23,8 +23,9 @@ void wdr_matrix_begin(void);
 void wdr_matrix_seed(const char *ssid, uint8_t auth, int8_t rssi, uint8_t channel);
 
 /* A newly discovered AP arrived: queue it for a decode fly-in, and if it
- * is OPEN or WPA3 raise the catch banner. 5 GHz decodes render magenta. */
-void wdr_matrix_feed(const char *ssid, uint8_t auth, int8_t rssi, uint8_t channel);
+ * is OPEN or WPA3 raise the catch banner. 5 GHz decodes render magenta.
+ * If surv_label is provided (e.g. "FLOCK CAM"), a red alert banner fires. */
+void wdr_matrix_feed(const char *ssid, uint8_t auth, int8_t rssi, uint8_t channel, const char *surv_label = nullptr);
 
 /* Render one frame. Call at ~40 ms cadence while this view is active. */
 void wdr_matrix_render(uint8_t chan, int ap_count, bool gps_valid, uint8_t sats);

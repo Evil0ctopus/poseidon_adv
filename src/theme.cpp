@@ -146,6 +146,106 @@ static const poseidon_theme_t THEMES[] = {
         0x0800,             /* footer_bg */
         0xE000,             /* rule: blood red */
     },
+    /* ---- AMBER CRT ----
+     * Warm 80s vintage monochrome terminal: glowing amber on deep black.
+     * High readability, soft on the eyes in dark environments. */
+    {
+        "AMBER CRT",
+        0x0000,             /* bg: pure black */
+        0xFD20,             /* fg: warm phosphor amber */
+        0xFD20,             /* accent: bright amber */
+        0xFA60,             /* accent2: deep amber/gold */
+        0xFFE0,             /* warn: bright yellow */
+        0xF800,             /* bad: red */
+        0xFD20,             /* good: amber */
+        0x8300,             /* dim: muted dark amber */
+        0x3180,             /* sel_bg: deep amber shadow */
+        0xFD20,             /* sel_border: amber */
+        0x2900,             /* status_bg: dark amber */
+        0x1080,             /* status_bg2: near-black amber */
+        0x1080,             /* footer_bg */
+        0xFA60,             /* rule: deep amber */
+    },
+    /* ---- NIGHT CITY ----
+     * High-contrast Cyberpunk 2077 aesthetic: electric neon yellow and
+     * high-voltage cyan on pitch black. Extremely sharp and vibrant. */
+    {
+        "NIGHT CITY",
+        0x0000,             /* bg: pure black */
+        0xFFE0,             /* fg: electric neon yellow */
+        0xFFE0,             /* accent: neon yellow */
+        0x07FF,             /* accent2: electric cyan */
+        0xFC00,             /* warn: neon orange */
+        0xF800,             /* bad: hot red */
+        0x07E0,             /* good: neon green */
+        0x7BE0,             /* dim: muted olive-yellow */
+        0x3200,             /* sel_bg: deep yellow shadow */
+        0xFFE0,             /* sel_border: electric yellow */
+        0x2100,             /* status_bg: dark yellow */
+        0x0000,             /* status_bg2: black */
+        0x0000,             /* footer_bg */
+        0x07FF,             /* rule: electric cyan */
+    },
+    /* ---- SOLARIS ----
+     * Deep solar gold, plasma orange, and warm flame accents on dark charcoal.
+     * High energy, celestial telemetry style. */
+    {
+        "SOLARIS",
+        0x0841,             /* bg: deep charcoal */
+        0xFFE8,             /* fg: warm solar white */
+        0xFDC0,             /* accent: intense solar gold */
+        0xFA60,             /* accent2: plasma orange */
+        0xFEA0,             /* warn: bright gold-yellow */
+        0xF800,             /* bad: solar flare red */
+        0x07E0,             /* good: corona green */
+        0x9480,             /* dim: muted bronze-amber */
+        0x39E0,             /* sel_bg: deep plasma bronze */
+        0xFDC0,             /* sel_border: solar gold */
+        0x2100,             /* status_bg: dark bronze */
+        0x1080,             /* status_bg2: deep charcoal */
+        0x1080,             /* footer_bg */
+        0xFA60,             /* rule: plasma orange */
+    },
+    /* ---- NORDIC FROST ----
+     * Glacial ice-cyan, frost-white, and electric polar highlights on deep arctic navy.
+     * Ultra clean, sharp high-luminance contrast. */
+    {
+        "NORDIC FROST",
+        0x0865,             /* bg: deep arctic navy */
+        0xE7FF,             /* fg: crisp frost white */
+        0x3FFF,             /* accent: glacial electric cyan */
+        0x9E7F,             /* accent2: polar ice blue */
+        0xFFE0,             /* warn: arctic gold */
+        0xF988,             /* bad: coral frost */
+        0x07F8,             /* good: aurora mint */
+        0x6C78,             /* dim: ice grey */
+        0x11B0,             /* sel_bg: dark glacial navy */
+        0x3FFF,             /* sel_border: electric cyan */
+        0x0908,             /* status_bg: deep arctic */
+        0x0084,             /* status_bg2: near-black navy */
+        0x0084,             /* footer_bg */
+        0x3FFF,             /* rule: electric cyan */
+    },
+    /* ---- GHOST PURPLE ----
+     * Ghost in the Shell cyberpunk: vivid neon violet and ultraviolet on pitch black.
+     * Stealthy, distinctive neon glow. */
+    {
+        "GHOST PURPLE",
+        0x0000,             /* bg: pure black */
+        0xF3FF,             /* fg: lavender white */
+        0xBA1F,             /* accent: neon ultraviolet */
+        0xE03F,             /* accent2: electric violet */
+        0xFFC0,             /* warn: neon amber */
+        0xF808,             /* bad: neon crimson */
+        0x07E8,             /* good: cyber green */
+        0x6198,             /* dim: muted violet */
+        0x2810,             /* sel_bg: dark purple shadow */
+        0xBA1F,             /* sel_border: neon ultraviolet */
+        0x1808,             /* status_bg: dark violet */
+        0x0800,             /* status_bg2: pitch black */
+        0x0800,             /* footer_bg */
+        0xBA1F,             /* rule: neon ultraviolet */
+    },
 };
 
 static theme_id_t s_current = THEME_POSEIDON;

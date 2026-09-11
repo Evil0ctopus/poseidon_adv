@@ -29,6 +29,12 @@ void dhcp_learn(const uint8_t mac[6], const char *hostname);
 /* Look up a previously-seen hostname. Returns nullptr if not cached. */
 const char *dhcp_hostname(const uint8_t mac[6]);
 
+/* Look up inferred operating system from DHCP fingerprints. Returns nullptr if not detected. */
+const char *dhcp_os(const uint8_t mac[6]);
+
+/* Learn full details (mac, hostname, os, vendor_class). */
+void dhcp_learn_full(const uint8_t mac[6], const char *hostname, const char *os, const char *vendor_class);
+
 /* Try to decode a DHCP Option 12 hostname out of a raw 802.11 data
  * frame payload (the whole promisc pkt.payload + sig_len). If the frame
  * is a DHCP DISCOVER/REQUEST, learns the hostname and returns true.

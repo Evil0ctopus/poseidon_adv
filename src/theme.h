@@ -46,6 +46,11 @@ enum theme_id_t {
     THEME_SYNTHWAVE,      /* vaporwave magenta + cyan on midnight grape */
     THEME_PHANTOM,        /* deep violet — matches phantom-* suite */
     THEME_BLOOD,          /* fsociety red on pure black */
+    THEME_AMBER_CRT,      /* 80s phosphor amber terminal */
+    THEME_NIGHT_CITY,     /* vivid cyberpunk electric yellow + cyan */
+    THEME_SOLARIS,        /* solar gold & warm plasma on charcoal */
+    THEME_NORDIC_FROST,   /* glacial ice-cyan & silver on arctic navy */
+    THEME_GHOST_PURPLE,   /* neon electric purple on obsidian */
     THEME__COUNT
 };
 

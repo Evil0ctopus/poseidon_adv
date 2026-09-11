@@ -20,6 +20,10 @@
 #include "radio.h"
 #include "menu.h"
 #include "ble_types.h"
+#include "../sigdb_bt.h"
+#include "../sd_helper.h"
+#include "../sfx.h"
+#include <SD.h>
 #include <NimBLEDevice.h>
 
 #define MAX_FLAT 48
@@ -30,6 +34,7 @@ struct gatt_node_t {
     NimBLEUUID uuid;
     uint8_t  props;   /* NIMBLE_PROPERTY bits */
     uint8_t  depth;   /* 0 = service, 1 = char */
+    char     name[28];
     NimBLERemoteCharacteristic *chr;
     NimBLERemoteService        *svc;
 };
@@ -39,6 +44,25 @@ static int s_flat_n = 0;
 
 static NimBLEClient *s_client = nullptr;
 static volatile bool s_connected = false;
+
+static void resolve_node_name(gatt_node_t &n)
+{
+    n.name[0] = '\0';
+    if (n.uuid.bitSize() == 16) {
+        /* In NimBLE 2.x, hex conversion or string comparison provides 16-bit UUID */
+        std::string s = n.uuid.toString();
+        uint16_t u16 = (uint16_t)strtoul(s.c_str(), nullptr, 16);
+        const char *resolved = n.is_svc ? bt_svc_name(u16) : bt_char_name(u16);
+        if (resolved) {
+            strncpy(n.name, resolved, sizeof(n.name) - 1);
+            n.name[sizeof(n.name) - 1] = '\0';
+            return;
+        }
+    }
+    std::string s = n.uuid.toString();
+    strncpy(n.name, s.c_str(), sizeof(n.name) - 1);
+    n.name[sizeof(n.name) - 1] = '\0';
+}
 
 static void add_node(bool is_svc, uint8_t depth, NimBLEUUID u, uint8_t props,
                      NimBLERemoteService *svc, NimBLERemoteCharacteristic *chr)
@@ -51,6 +75,7 @@ static void add_node(bool is_svc, uint8_t depth, NimBLEUUID u, uint8_t props,
     n.props  = props;
     n.svc    = svc;
     n.chr    = chr;
+    resolve_node_name(n);
 }
 
 static void enumerate_services(void)
@@ -104,6 +129,19 @@ static void print_hex(const uint8_t *buf, size_t n)
     d.setTextColor(T_FG, T_BG);
 }
 
+static volatile bool s_notify_active = false;
+static std::string   s_notify_val;
+static volatile bool s_notify_updated = false;
+
+static void notify_callback(NimBLERemoteCharacteristic *pBLERemoteCharacteristic,
+                            uint8_t *pData, size_t length, bool isNotify)
+{
+    (void)pBLERemoteCharacteristic;
+    (void)isNotify;
+    s_notify_val.assign((const char *)pData, length);
+    s_notify_updated = true;
+}
+
 static void show_characteristic(int idx)
 {
     auto &d = M5Cardputer.Display;
@@ -115,7 +153,7 @@ static void show_characteristic(int idx)
     d.setCursor(4, BODY_Y + 2); d.print("CHAR");
     d.drawFastHLine(4, BODY_Y + 12, 40, T_ACCENT);
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(4, BODY_Y + 16); d.printf("uuid: %.30s", n.uuid.toString().c_str());
+    d.setCursor(4, BODY_Y + 16); d.printf("uuid: %.30s", n.name);
 
     char props_str[20] = "";
     if (n.props & 0x01) strcat(props_str, "R ");
@@ -125,13 +163,32 @@ static void show_characteristic(int idx)
     if (n.props & 0x10) strcat(props_str, "I ");
     d.setCursor(4, BODY_Y + 28); d.printf("prop: %s", props_str);
 
-    ui_draw_footer("R=read  W=write  `=back");
+    ui_draw_footer("R=read W=write N=stream `=back");
 
     std::string last_val;
+    s_notify_active = false;
+    s_notify_updated = false;
+
     while (true) {
+        if (s_notify_active && s_notify_updated) {
+            s_notify_updated = false;
+            d.fillRect(0, BODY_Y + 42, SCR_W, 40, T_BG);
+            d.setTextColor(T_ACCENT2, T_BG);
+            d.setCursor(4, BODY_Y + 42);
+            d.printf("NOTIFY %d bytes", (int)s_notify_val.size());
+            print_hex((const uint8_t *)s_notify_val.data(), s_notify_val.size());
+            sfx_click();
+        }
+
         uint16_t k = input_poll();
         if (k == PK_NONE) { delay(20); continue; }
-        if (k == PK_ESC) return;
+        if (k == PK_ESC) {
+            if (s_notify_active) {
+                n.chr->unsubscribe();
+                s_notify_active = false;
+            }
+            return;
+        }
 
         char ch = (char)tolower((int)k);
         if (ch == 'r' && n.chr->canRead()) {
@@ -141,6 +198,23 @@ static void show_characteristic(int idx)
             d.setCursor(4, BODY_Y + 42);
             d.printf("READ %d bytes", (int)last_val.size());
             print_hex((const uint8_t *)last_val.data(), last_val.size());
+            sfx_click();
+        } else if (ch == 'n' && (n.chr->canNotify() || n.chr->canIndicate())) {
+            s_notify_active = !s_notify_active;
+            if (s_notify_active) {
+                bool ok = n.chr->subscribe(n.chr->canNotify() ? true : false, notify_callback);
+                d.fillRect(0, BODY_Y + 42, SCR_W, 40, T_BG);
+                d.setTextColor(ok ? T_GOOD : T_BAD, T_BG);
+                d.setCursor(4, BODY_Y + 42);
+                d.printf("NOTIFY STREAM: %s", ok ? "ACTIVE" : "FAIL");
+                if (ok) sfx_scan_start();
+            } else {
+                n.chr->unsubscribe();
+                d.fillRect(0, BODY_Y + 42, SCR_W, 40, T_BG);
+                d.setTextColor(T_WARN, T_BG);
+                d.setCursor(4, BODY_Y + 42);
+                d.print("NOTIFY STREAM: STOPPED");
+            }
         } else if (ch == 'w' && (n.chr->canWrite() || n.chr->canWriteNoResponse())) {
             char hex[128];
             if (!input_line("hex to write (AA BB CC):", hex, sizeof(hex))) continue;
@@ -155,6 +229,8 @@ static void show_characteristic(int idx)
             d.setTextColor(ok ? T_GOOD : T_BAD, T_BG);
             d.setCursor(4, BODY_Y + 42);
             d.printf("WRITE %d → %s", len, ok ? "OK" : "FAIL");
+            if (ok) sfx_select();
+            else    sfx_error();
         }
     }
 }
@@ -190,11 +266,11 @@ static void draw_tree(int cursor)
         if (n.is_svc) {
             d.setTextColor(T_WARN, bg);
             d.setCursor(4, y);
-            d.printf("SVC %.28s", n.uuid.toString().c_str());
+            d.printf("SVC %.28s", n.name);
         } else {
             d.setTextColor(sel ? T_ACCENT : T_FG, bg);
             d.setCursor(12, y);
-            d.printf("%.22s", n.uuid.toString().c_str());
+            d.printf("%.22s", n.name);
             d.setTextColor(T_DIM, bg);
             d.setCursor(SCR_W - 48, y);
             if (n.props & 0x01) d.print("R");
@@ -262,7 +338,7 @@ void feat_ble_gatt(void)
     enumerate_services();
 
     int cursor = 0;
-    ui_draw_footer(";/.=move  ENTER=open  `=back");
+    ui_draw_footer(";/.=move ENTER=open S=dump `=back");
     while (true) {
         draw_tree(cursor);
         uint16_t k = input_poll();
@@ -272,12 +348,50 @@ void feat_ble_gatt(void)
         if (k == '.' || k == PK_DOWN) { if (cursor + 1 < s_flat_n) cursor++; }
         if (k == '?') {
             ui_show_current_help();
-            ui_draw_footer(";/.=move  ENTER=open  `=back");
+            ui_draw_footer(";/.=move ENTER=open S=dump `=back");
+        }
+        if (k == 's' || k == 'S') {
+            if (sd_is_mounted() && s_flat_n > 0) {
+                sd_ensure_layout();
+                char path[64];
+                snprintf(path, sizeof(path), SD_BLE_CAPTURE_DIR "/gatt-%02X%02X%02X-%lu.txt",
+                         g_ble_target.addr[3], g_ble_target.addr[4], g_ble_target.addr[5],
+                         (unsigned long)(millis() / 1000));
+                SD.mkdir(SD_BLE_CAPTURE_DIR);
+                File f = SD.open(path, FILE_WRITE);
+                if (f) {
+                    f.printf("Device: %s\n", g_ble_target.name[0] ? g_ble_target.name : "(unknown)");
+                    f.printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\n\n",
+                             g_ble_target.addr[0], g_ble_target.addr[1], g_ble_target.addr[2],
+                             g_ble_target.addr[3], g_ble_target.addr[4], g_ble_target.addr[5]);
+                    for (int i = 0; i < s_flat_n; ++i) {
+                        const gatt_node_t &gn = s_flat[i];
+                        if (gn.is_svc) {
+                            f.printf("\n[SERVICE] %s (%s)\n", gn.name, gn.uuid.toString().c_str());
+                        } else {
+                            f.printf("  [CHAR] %s (%s) [", gn.name, gn.uuid.toString().c_str());
+                            if (gn.props & 0x01) f.print("R ");
+                            if (gn.props & 0x02) f.print("W ");
+                            if (gn.props & 0x04) f.print("w ");
+                            if (gn.props & 0x08) f.print("N ");
+                            if (gn.props & 0x10) f.print("I ");
+                            f.print("]\n");
+                        }
+                    }
+                    f.close();
+                    sfx_capture();
+                    ui_toast("GATT Tree dumped to SD", T_GOOD, 1000);
+                } else {
+                    ui_toast("SD write error", T_BAD, 800);
+                }
+            } else {
+                ui_toast("No SD card", T_WARN, 800);
+            }
         }
         if (k == PK_ENTER) {
             if (cursor < s_flat_n && !s_flat[cursor].is_svc) {
                 show_characteristic(cursor);
-                ui_draw_footer(";/.=move  ENTER=open  `=back");
+                ui_draw_footer(";/.=move ENTER=open S=dump `=back");
             }
         }
     }

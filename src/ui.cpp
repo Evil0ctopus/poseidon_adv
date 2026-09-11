@@ -140,6 +140,8 @@ static char     s_st_radio[24] = {0};
 static char     s_st_extra[24] = {0};
 static uint32_t s_st_heap_bucket = 0xFFFFFFFFu;
 static int      s_st_c5_n = -1;
+static int      s_st_bat_bucket = -1;
+static bool     s_st_chg = false;
 static bool     s_st_valid = false;
 
 void ui_draw_status(const char *radio, const char *extra)
@@ -156,11 +158,19 @@ void ui_draw_status(const char *radio, const char *extra)
     uint32_t heap_bucket = (esp_get_free_heap_size() / 1024) / 32;
     int c5_n = c5_any_online() ? c5_peer_count() : 0;
 
+    int32_t bat_level = M5Cardputer.Power.getBatteryLevel();
+    if (bat_level < 0)   bat_level = 0;
+    if (bat_level > 100) bat_level = 100;
+    int bat_bucket = (int)(bat_level / 10);
+    bool chg = M5Cardputer.Power.isCharging();
+
     bool changed = !s_st_valid
                 || strncmp(rr, s_st_radio, sizeof(s_st_radio)) != 0
                 || strncmp(ee, s_st_extra, sizeof(s_st_extra)) != 0
                 || heap_bucket != s_st_heap_bucket
-                || c5_n != s_st_c5_n;
+                || c5_n != s_st_c5_n
+                || bat_bucket != s_st_bat_bucket
+                || chg != s_st_chg;
 
     /* Pulse dot animates independently. Only the 5x5 rect repaints. */
     uint32_t now = millis();
@@ -183,6 +193,21 @@ void ui_draw_status(const char *radio, const char *extra)
     d.setTextColor(T_FG, 0);
     d.printf("  %s", rr);
 
+    /* Battery Icon on far right (14px wide) */
+    const int bat_x = SCR_W - 16;
+    const int bat_y = 2;
+    d.drawRect(bat_x, bat_y, 13, 7, T_DIM);
+    d.drawFastVLine(bat_x + 13, bat_y + 2, 3, T_DIM);
+
+    int fill_w = (bat_level * 11) / 100;
+    uint16_t bat_col = chg ? T_ACCENT : (bat_level > 50 ? T_GOOD : (bat_level > 20 ? T_WARN : T_BAD));
+    if (fill_w > 0) {
+        d.fillRect(bat_x + 1, bat_y + 1, fill_w, 5, bat_col);
+    }
+    if (chg) {
+        d.drawPixel(bat_x + 6, bat_y + 3, 0xFFFF);
+    }
+
     d.setTextColor(T_DIM, 0);
     char buf[32];
     uint32_t heap_kb = heap_bucket * 4;   /* quantised label */
@@ -191,7 +216,7 @@ void ui_draw_status(const char *radio, const char *extra)
              *ee ? "  " : "",
              *ee ? ee : "");
     int w = d.textWidth(buf);
-    d.setCursor(SCR_W - w - 4, 2);
+    d.setCursor(bat_x - w - 4, 2);
     d.print(buf);
 
     /* C5/TRIDENT satellite indicator — 6x8 "C5 xN" badge + green dot
@@ -202,7 +227,7 @@ void ui_draw_status(const char *radio, const char *extra)
         char badge[16];
         snprintf(badge, sizeof(badge), "C5 x%d", c5_n);
         int bw = d.textWidth(badge);
-        int bx = SCR_W - w - bw - 12;
+        int bx = bat_x - w - bw - 12;
         if (bx > 80) {
             d.fillCircle(bx - 5, 6, 2, T_GOOD);
             d.setTextColor(T_GOOD, 0);
@@ -220,6 +245,8 @@ void ui_draw_status(const char *radio, const char *extra)
     strncpy(s_st_extra, ee, sizeof(s_st_extra) - 1); s_st_extra[sizeof(s_st_extra) - 1] = 0;
     s_st_heap_bucket = heap_bucket;
     s_st_c5_n        = c5_n;
+    s_st_bat_bucket  = bat_bucket;
+    s_st_chg         = chg;
     s_st_valid = true;
 }
 
@@ -959,7 +986,7 @@ void ui_action_overlay_with_tick(const char *headline, const char *subtitle,
  *   - advances head down; resets when off-screen
  * Glyph pool: printable katakana-ish via random printable chars.
  */
-#define MATRIX_COLS 20
+#define MATRIX_COLS 42
 static int8_t  mx_head[MATRIX_COLS];      /* -1 = inactive */
 static uint8_t mx_speed[MATRIX_COLS];
 static char    mx_glyph[MATRIX_COLS];

@@ -13,6 +13,7 @@
 #include "ui.h"
 #include "input.h"
 #include "radio.h"
+#include "../sfx.h"
 #include <WiFi.h>
 #include <ESP32Ping.h>
 
@@ -34,6 +35,28 @@ static bool require_sta(void)
         return false;
     }
     return true;
+}
+
+static void grab_banner(WiFiClient &c, int port, char *out, size_t out_sz)
+{
+    out[0] = 0;
+    if (port == 80 || port == 8080 || port == 8000) {
+        c.print("HEAD / HTTP/1.0\r\n\r\n");
+    }
+    uint32_t dl = millis() + 400;
+    int idx = 0;
+    while (millis() < dl && c.connected() && idx + 1 < (int)out_sz) {
+        while (c.available() && idx + 1 < (int)out_sz) {
+            char ch = (char)c.read();
+            if (ch == '\r' || ch == '\n') {
+                if (idx > 0) { out[idx] = 0; return; }
+            } else if (ch >= 32 && ch < 127) {
+                out[idx++] = ch;
+            }
+        }
+        delay(10);
+    }
+    out[idx] = 0;
 }
 
 void feat_net_portscan(void)
@@ -69,16 +92,95 @@ void feat_net_portscan(void)
         WiFiClient c;
         c.setTimeout(300);
         if (c.connect(ip, p)) {
-            ui_text(4, y, T_GOOD, "OPEN %d", p);
+            char banner[36] = {0};
+            grab_banner(c, p, banner, sizeof(banner));
+            if (banner[0]) {
+                ui_text(4, y, T_GOOD, "OPEN %-5d %.24s", p, banner);
+            } else {
+                ui_text(4, y, T_GOOD, "OPEN %d", p);
+            }
             y += 10;
             if (y > FOOTER_Y - 12) y = BODY_Y + 36;
             open_count++;
+            sfx_click();
             c.stop();
         }
         uint16_t k = input_poll();
         if (k == PK_ESC) break;
     }
     ui_text_w(4, BODY_Y + 22, SCR_W - 8, T_ACCENT, "done. %d open.", open_count);
+    sfx_scan_hit();
+    while (true) {
+        uint16_t k = input_poll();
+        if (k == PK_NONE) { delay(20); continue; }
+        if (k == PK_ESC) break;
+    }
+}
+
+void feat_net_pingsweep(void)
+{
+    radio_switch(RADIO_WIFI);
+    if (!require_sta()) return;
+
+    IPAddress myIP = WiFi.localIP();
+    IPAddress baseIP = myIP;
+
+    auto &d = M5Cardputer.Display;
+    ui_clear_body();
+    d.setTextColor(T_ACCENT, T_BG);
+    d.setCursor(4, BODY_Y + 2); d.print("SUBNET PING SWEEP (/24)");
+    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+    ui_draw_footer("`=stop");
+
+    int alive_count = 0;
+    int grid_w = 16, grid_h = 16;
+    int cell_w = 12, cell_h = 5;
+    int start_x = (SCR_W - grid_w * cell_w) / 2;
+    int start_y = BODY_Y + 16;
+
+    /* Draw grid background */
+    for (int gy = 0; gy < grid_h; gy++) {
+        for (int gx = 0; gx < grid_w; gx++) {
+            d.drawRect(start_x + gx * cell_w, start_y + gy * cell_h, cell_w - 1, cell_h - 1, 0x18C3);
+        }
+    }
+
+    for (int host = 1; host <= 254; host++) {
+        IPAddress target(baseIP[0], baseIP[1], baseIP[2], host);
+        int gx = (host - 1) % grid_w;
+        int gy = (host - 1) / grid_w;
+
+        bool is_me = (target == myIP);
+        bool alive = false;
+        if (is_me) {
+            alive = true;
+        } else {
+            alive = Ping.ping(target, 1);
+        }
+
+        uint16_t col = is_me ? T_ACCENT2 : (alive ? T_GOOD : 0x0820);
+        d.fillRect(start_x + gx * cell_w, start_y + gy * cell_h, cell_w - 1, cell_h - 1, col);
+
+        if (alive) {
+            alive_count++;
+            sfx_click();
+        }
+
+        d.setTextColor(T_DIM, T_BG);
+        d.fillRect(4, FOOTER_Y - 14, SCR_W - 8, 8, T_BG);
+        d.setCursor(4, FOOTER_Y - 14);
+        d.printf(".%-3d | Alive: %d", host, alive_count);
+
+        uint16_t k = input_poll();
+        if (k == PK_ESC) break;
+    }
+
+    d.setTextColor(T_ACCENT, T_BG);
+    d.fillRect(4, FOOTER_Y - 14, SCR_W - 8, 8, T_BG);
+    d.setCursor(4, FOOTER_Y - 14);
+    d.printf("Done: %d active on /24", alive_count);
+    sfx_scan_hit();
+
     while (true) {
         uint16_t k = input_poll();
         if (k == PK_NONE) { delay(20); continue; }

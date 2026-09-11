@@ -33,7 +33,10 @@
 #include "ui.h"
 #include "input.h"
 #include "radio.h"
+#include "ble_db.h"
+#include "../sd_helper.h"
 #include <WiFi.h>
+#include <SD.h>
 #include <esp_wifi.h>
 #include <esp_random.h>
 #include <esp_netif.h>
@@ -59,8 +62,34 @@ static volatile uint32_t s_resp_total  = 0;
 static volatile uint32_t s_resp_err    = 0;
 static volatile bool     s_karma_mode  = false;
 static volatile uint8_t  s_cur_channel = 1;
+static volatile bool     s_auto_hop    = true;
 static portMUX_TYPE      s_probe_mux   = portMUX_INITIALIZER_UNLOCKED;
 static uint16_t          s_resp_seq    = 0;
+static File              s_probe_file;
+
+static void log_probe_to_sd(const uint8_t *client, const char *ssid, int8_t rssi, uint8_t ch)
+{
+    if (!sd_is_mounted()) return;
+    if (!s_probe_file) {
+        sd_ensure_layout();
+        char path[64];
+        snprintf(path, sizeof(path), SD_CAPTURE_ROOT "/probes/probes-%lu.csv", (unsigned long)(millis() / 1000));
+        SD.mkdir(SD_CAPTURE_ROOT "/probes");
+        s_probe_file = SD.open(path, FILE_APPEND);
+        if (s_probe_file && s_probe_file.size() == 0) {
+            s_probe_file.println("ms,mac,vendor,rssi,ch,ssid");
+        }
+    }
+    if (s_probe_file) {
+        uint32_t oui = ((uint32_t)client[0] << 16) | ((uint32_t)client[1] << 8) | client[2];
+        const char *v = (client[0] & 0x02) ? "Randomized" : ble_db_oui(oui);
+        s_probe_file.printf("%lu,%02X:%02X:%02X:%02X:%02X:%02X,\"%s\",%d,%u,\"%s\"\n",
+                            (unsigned long)millis(),
+                            client[0], client[1], client[2], client[3], client[4], client[5],
+                            v ? v : "Unknown", (int)rssi, (unsigned)ch, ssid);
+        s_probe_file.flush();
+    }
+}
 
 /* Find index for (client, ssid). Returns -1 if not present.
  * NOTE: caller holds s_probe_mux. */
@@ -223,6 +252,7 @@ static void probe_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 
     portENTER_CRITICAL(&s_probe_mux);
     int idx = find_probe(client, ssid);
+    bool is_new = (idx < 0);
     if (idx < 0) {
         if (s_probe_count >= PROBE_MAX) {
             /* Evict oldest. */
@@ -248,6 +278,10 @@ static void probe_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     uint16_t seq = s_resp_seq;
     s_resp_seq = (s_resp_seq + 1) & 0x0FFF;
     portEXIT_CRITICAL(&s_probe_mux);
+
+    if (is_new && !s_karma_mode) {
+        log_probe_to_sd(client, ssid, pkt->rx_ctrl.rssi, s_cur_channel);
+    }
 
     if (do_respond) {
         /* Fire ONE probe-response per directed probe. Bursting multiple
@@ -310,8 +344,9 @@ static void draw_probe_list(int cursor)
                  (unsigned long)s_resp_total,
                  (unsigned long)(s_resp_total + s_resp_err));
     } else {
-        d.printf("PROBES ch%u  seen:%lu",
+        d.printf("PROBES ch%-2u %s  seen:%-5lu",
                  (unsigned)s_cur_channel,
+                 s_auto_hop ? "[HOP]" : "[FIX]",
                  (unsigned long)s_probe_total);
     }
     d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
@@ -328,7 +363,7 @@ static void draw_probe_list(int cursor)
         return;
     }
 
-    int rows = 8;
+    int rows = 7;
     int first = cursor - rows / 2;
     if (first < 0) first = 0;
     if (first + rows > count) first = max(0, count - rows);
@@ -343,9 +378,22 @@ static void draw_probe_list(int cursor)
         uint16_t bg = sel ? 0x18C7 : T_BG;
         if (sel) d.fillRect(0, y - 1, SCR_W, 11, bg);
 
-        d.setTextColor(T_DIM, bg);
+        /* Vendor or MAC */
+        uint32_t oui = ((uint32_t)pp.client[0] << 16) | ((uint32_t)pp.client[1] << 8) | pp.client[2];
+        const char *v = (pp.client[0] & 0x02) ? "RND" : ble_db_oui(oui);
+        char vtag[6] = {0};
+        if (v && strcmp(v, "RND") != 0) {
+            strncpy(vtag, v, 4);
+        } else if (pp.client[0] & 0x02) {
+            strcpy(vtag, "RND");
+        } else {
+            snprintf(vtag, sizeof(vtag), "%02X", pp.client[5]);
+        }
+
+        d.setTextColor(sel ? T_FG : T_ACCENT2, bg);
         d.setCursor(2, y);
-        d.printf("%02X%02X", pp.client[4], pp.client[5]);
+        d.printf("%-4.4s", vtag);
+
         /* Show response count in karma mode, RSSI in sniff mode. */
         if (s_karma_mode) {
             uint16_t col = pp.responses > 0 ? T_GOOD : T_DIM;
@@ -363,6 +411,22 @@ static void draw_probe_list(int cursor)
         d.setTextColor(sel ? T_ACCENT : T_FG, bg);
         d.setCursor(72, y);
         d.printf("%.21s", pp.ssid);
+    }
+
+    /* Selected client detail footer summary */
+    if (cursor >= 0 && cursor < count) {
+        probe_t cp;
+        portENTER_CRITICAL(&s_probe_mux);
+        cp = s_probes[cursor];
+        portEXIT_CRITICAL(&s_probe_mux);
+        uint32_t oui = ((uint32_t)cp.client[0] << 16) | ((uint32_t)cp.client[1] << 8) | cp.client[2];
+        const char *v = (cp.client[0] & 0x02) ? "Randomized MAC" : ble_db_oui(oui);
+        d.setTextColor(T_DIM, T_BG);
+        d.setCursor(4, BODY_Y + 16 + rows * 11 + 2);
+        d.printf("%02X:%02X:%02X:%02X:%02X:%02X  %.12s",
+                 cp.client[0], cp.client[1], cp.client[2],
+                 cp.client[3], cp.client[4], cp.client[5],
+                 v ? v : "Unknown");
     }
 }
 
@@ -549,6 +613,7 @@ static void run_probe_sniff(void)
     radio_switch(RADIO_WIFI);
     wifi_lean_sta_init();
     s_cur_channel = 1;
+    s_auto_hop = true;
     portENTER_CRITICAL(&s_probe_mux);
     s_probe_count = 0;
     portEXIT_CRITICAL(&s_probe_mux);
@@ -559,26 +624,32 @@ static void run_probe_sniff(void)
     esp_wifi_set_promiscuous_rx_cb(probe_cb);
     esp_wifi_set_channel(s_cur_channel, WIFI_SECOND_CHAN_NONE);
 
-    ui_draw_footer("TAB=chan  `=stop");
+    ui_draw_footer(";/.=move H=hop TAB=ch S=save `=exit");
 
     int cursor = 0;
     uint32_t last_redraw = 0;
+    uint32_t last_hop    = 0;
     int last_count  = -1;
     int last_cursor = -1;
     while (true) {
         uint32_t now = millis();
-        if (now - last_redraw > 400) {
+
+        if (s_auto_hop && now - last_hop > 400) {
+            last_hop = now;
+            s_cur_channel = (uint8_t)((s_cur_channel % 13) + 1);
+            esp_wifi_set_channel(s_cur_channel, WIFI_SECOND_CHAN_NONE);
+        }
+
+        if (now - last_redraw > 300) {
             last_redraw = now;
             int cnt;
             portENTER_CRITICAL(&s_probe_mux);
             cnt = s_probe_count;
             portEXIT_CRITICAL(&s_probe_mux);
-            /* Repaint only on change — no unconditional periodic clear. */
-            if (cnt != last_count || cursor != last_cursor) {
-                last_count  = cnt;
-                last_cursor = cursor;
-                draw_probe_list(cursor);
-            }
+            /* Repaint on change or periodic */
+            draw_probe_list(cursor);
+            last_count  = cnt;
+            last_cursor = cursor;
         }
         /* Active listening indicator every iteration so a quiet channel
          * (no probes yet) never reads as a frozen device. Self-throttles. */
@@ -598,15 +669,28 @@ static void run_probe_sniff(void)
         switch (k) {
         case ';': case PK_UP:   if (cursor > 0) cursor--; break;
         case '.': case PK_DOWN: if (cursor + 1 < count) cursor++; break;
+        case 'h': case 'H':
+            s_auto_hop = !s_auto_hop;
+            ui_toast(s_auto_hop ? "Auto channel hop ON" : "Channel hop locked", s_auto_hop ? T_GOOD : T_WARN, 600);
+            break;
         case PK_TAB:
-            s_cur_channel = (uint8_t)((s_cur_channel % 11) + 1);
+            s_auto_hop = false;
+            s_cur_channel = (uint8_t)((s_cur_channel % 13) + 1);
             esp_wifi_set_channel(s_cur_channel, WIFI_SECOND_CHAN_NONE);
+            break;
+        case 's': case 'S':
+            if (s_probe_file) s_probe_file.flush();
+            ui_toast("Probes saved to SD", T_GOOD, 700);
             break;
         }
     }
 
     esp_wifi_set_promiscuous(false);
     esp_wifi_set_promiscuous_rx_cb(nullptr);
+    if (s_probe_file) {
+        s_probe_file.flush();
+        s_probe_file.close();
+    }
 }
 
 void feat_wifi_probe(void) { run_probe_sniff(); }

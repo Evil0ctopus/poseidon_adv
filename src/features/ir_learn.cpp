@@ -15,6 +15,7 @@
 #include "../ir_hw.h"
 #include "../ir_learn_decode.h"
 #include "../sd_helper.h"
+#include "../sfx.h"
 #include <driver/rmt_rx.h>
 #include <driver/gpio.h>
 #include <SD.h>
@@ -111,53 +112,98 @@ static void ir_replay(void) {
     digitalWrite(IR_TX_PIN, TX_OFF);
 }
 
-/* ---- SD save (/poseidon/ir/slot<N>.ir : CSV of µs values) ---- */
+static ir_decoded_t s_decoded = {};
+static bool         s_has_decoded = false;
+
+/* ---- SD save (/poseidon/ir/slot<N>.ir : CSV of µs values + header) ---- */
 static void ir_save(int slot) {
     if (!sd_mount()) { ui_toast("no SD", T_BAD, 1000); return; }
     SD.mkdir("/poseidon"); SD.mkdir("/poseidon/ir");
-    char path[40]; snprintf(path, sizeof(path), "/poseidon/ir/slot%d.ir", slot);
+    char path[48];
+    if (s_has_decoded && s_decoded.proto != IR_PROTO_RAW) {
+        snprintf(path, sizeof(path), "/poseidon/ir/%s_0x%04X_0x%02X.ir",
+                 s_decoded.proto_name, (unsigned)s_decoded.address, (unsigned)s_decoded.command);
+    } else {
+        snprintf(path, sizeof(path), "/poseidon/ir/raw_slot%d.ir", slot);
+    }
     File f = SD.open(path, FILE_WRITE);
     if (!f) { ui_toast("save failed", T_BAD, 1000); return; }
+    if (s_has_decoded) {
+        f.printf("# Protocol: %s (Bits: %d, Addr: 0x%04X, Cmd: 0x%02X)\n",
+                 s_decoded.proto_name, s_decoded.bits,
+                 (unsigned)s_decoded.address, (unsigned)s_decoded.command);
+    }
     for (uint16_t i = 0; i < s_count; ++i) f.printf("%u%s", s_timings[i], i + 1 < s_count ? "," : "\n");
     f.close();
-    ui_toast("saved", T_GOOD, 800);
+    ui_toast("saved to SD", T_GOOD, 800);
 }
 
 void feat_ir_learn(void) {
     int slot = 0;
+    s_count = 0;
+    s_has_decoded = false;
     ui_clear_body();
     ui_draw_status("IR", "learn");
-    ui_draw_footer("SPACE=capture  R=replay  S=save  `=back");
+    ui_draw_footer("SPACE=cap  R=replay  S=save  `=back");
     auto &d = M5Cardputer.Display;
     d.setTextColor(T_ACCENT, T_BG);
-    d.setCursor(4, BODY_Y + 2); d.print("IR LEARN");
+    d.setCursor(4, BODY_Y + 2); d.print("IR LEARN & DECODE");
+    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
     d.setTextColor(T_DIM, T_BG);
-    d.setCursor(4, BODY_Y + 20); d.print("point remote, press SPACE");
+    d.setCursor(4, BODY_Y + 18); d.print("Point remote at G5, press SPACE");
 
     while (true) {
         uint16_t k = input_poll();
         if (k == PK_NONE) { delay(20); continue; }
         if (k == PK_ESC) return;
         if (k == PK_SPACE) {
-            d.fillRect(0, BODY_Y + 34, SCR_W, 40, T_BG);
+            d.fillRect(0, BODY_Y + 30, SCR_W, BODY_H - 30, T_BG);
             d.setTextColor(T_WARN, T_BG);
-            d.setCursor(4, BODY_Y + 34); d.print("waiting for signal...");
+            d.setCursor(4, BODY_Y + 32); d.print("listening for IR pulses...");
             uint16_t n = ir_capture(6000);
             s_count = n;
-            d.fillRect(0, BODY_Y + 34, SCR_W, 40, T_BG);
+            d.fillRect(0, BODY_Y + 30, SCR_W, BODY_H - 30, T_BG);
             if (n == 0) {
                 d.setTextColor(T_BAD, T_BG);
-                d.setCursor(4, BODY_Y + 34); d.print("no signal");
+                d.setCursor(4, BODY_Y + 32); d.print("no signal detected");
+                s_has_decoded = false;
             } else {
+                s_has_decoded = ir_decode_pulses(s_timings, s_count, &s_decoded);
                 d.setTextColor(T_GOOD, T_BG);
-                d.setCursor(4, BODY_Y + 34);
-                d.printf("captured %u edges%s", n, s_truncated ? " (trunc)" : "");
+                d.setCursor(4, BODY_Y + 30);
+                d.printf("Captured %u pulses%s", n, s_truncated ? " (trunc)" : "");
+
+                if (s_has_decoded && s_decoded.proto != IR_PROTO_RAW) {
+                    d.setTextColor(T_ACCENT2, T_BG);
+                    d.setCursor(4, BODY_Y + 44);
+                    d.printf("PROTO: %s (%d-bit)", s_decoded.proto_name, (int)s_decoded.bits);
+
+                    d.setTextColor(T_FG, T_BG);
+                    d.setCursor(4, BODY_Y + 56);
+                    d.printf("ADDR:  0x%04X", (unsigned)s_decoded.address);
+                    d.setCursor(120, BODY_Y + 56);
+                    d.printf("CMD: 0x%02X", (unsigned)s_decoded.command);
+                } else {
+                    d.setTextColor(T_WARN, T_BG);
+                    d.setCursor(4, BODY_Y + 44);
+                    d.print("PROTO: RAW / Unrecognized");
+                    d.setTextColor(T_DIM, T_BG);
+                    d.setCursor(4, BODY_Y + 56);
+                    d.printf("Pulse 0: %uus, 1: %uus", s_timings[0], s_timings[1]);
+                }
+
+                d.setTextColor(T_DIM, T_BG);
+                d.setCursor(4, BODY_Y + 72);
+                d.print("Press R to transmit / S to save");
+                sfx_scan_hit();
             }
         } else if ((k == 'r' || k == 'R') && s_count > 0) {
             ir_replay();
-            ui_toast("replayed", T_ACCENT, 500);
+            sfx_select();
+            ui_toast("replayed IR", T_ACCENT, 500);
         } else if ((k == 's' || k == 'S') && s_count > 0) {
             ir_save(slot++);
+            sfx_capture();
         }
     }
 }

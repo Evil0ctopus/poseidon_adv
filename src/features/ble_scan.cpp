@@ -44,6 +44,7 @@ struct ble_dev_t {
     uint8_t  addr[6];
     char     name[20];
     char     type[24];   /* "AirPods Pro 2 (USB-C)", "Samsung", etc. */
+    char     extra[32];  /* Battery / Telemetry / FastPair Model */
     int8_t   rssi;
     bool     is_public;
 };
@@ -64,6 +65,68 @@ static void sanitize(const char *in, char *out, size_t out_sz)
         if (c >= 0x20 && c < 0x7F) out[j++] = (char)c;
     }
     out[j] = '\0';
+}
+
+/* Extract deep telemetry: Apple Continuity battery levels, FastPair models, etc. */
+static void decode_extra_telemetry(const NimBLEAdvertisedDevice *d, char *out, size_t out_sz)
+{
+    out[0] = '\0';
+    std::string md;
+    if (d->haveManufacturerData()) md = d->getManufacturerData();
+
+    if (md.size() >= 3 && (uint8_t)md[0] == 0x4C && (uint8_t)md[1] == 0x00) {
+        /* Apple Continuity */
+        uint8_t type = (uint8_t)md[2];
+        if (type == 0x07 && md.size() >= 8) {
+            /* Proximity Pairing: AirPods battery nibbles */
+            uint8_t b_main = (uint8_t)md[6];
+            uint8_t b_case = (uint8_t)md[7];
+            int bat_l = (b_main & 0x0F) * 10;
+            int bat_r = ((b_main >> 4) & 0x0F) * 10;
+            int bat_c = (b_case & 0x0F) * 10;
+            if (bat_l <= 100 && bat_r <= 100) {
+                snprintf(out, out_sz, "L:%d%% R:%d%% Case:%d%%", bat_l, bat_r, bat_c);
+                return;
+            }
+        } else if (type == 0x10) {
+            uint8_t act = md.size() >= 6 ? (uint8_t)md[5] : 0;
+            snprintf(out, out_sz, "Nearby Action (0x%02X)", act);
+            return;
+        } else if (type == 0x09) {
+            snprintf(out, out_sz, "AirTag / Find My");
+            return;
+        } else if (type == 0x05) {
+            snprintf(out, out_sz, "AirDrop Present");
+            return;
+        } else if (type == 0x0C) {
+            snprintf(out, out_sz, "Apple Handoff");
+            return;
+        }
+    } else if (md.size() >= 2 && (uint8_t)md[0] == 0x75 && (uint8_t)md[1] == 0x00) {
+        snprintf(out, out_sz, "Samsung SmartThings/Buds");
+        return;
+    } else if (md.size() >= 2 && (uint8_t)md[0] == 0x06 && (uint8_t)md[1] == 0x00) {
+        snprintf(out, out_sz, "MS SwiftPair Beacon");
+        return;
+    }
+
+    /* Google Fast Pair (Service Data 0xFE9F) */
+    if (d->haveServiceData()) {
+        for (int i = 0; i < d->getServiceDataCount(); ++i) {
+            NimBLEUUID u = d->getServiceDataUUID(i);
+            std::string s = u.toString();
+            if (s.find("fe9f") != std::string::npos || s.find("FE9F") != std::string::npos) {
+                std::string sd = d->getServiceData(i);
+                if (sd.size() >= 3) {
+                    uint32_t model = ((uint32_t)(uint8_t)sd[0] << 16) | ((uint32_t)(uint8_t)sd[1] << 8) | (uint8_t)sd[2];
+                    const char *fp_name = ble_db_fastpair(model);
+                    if (fp_name) snprintf(out, out_sz, "FP: %s", fp_name);
+                    else         snprintf(out, out_sz, "FastPair (0x%06X)", (unsigned)model);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /* Best-effort type classification using the full ble_db tables. */
@@ -165,8 +228,10 @@ class ble_scan_cb : public NimBLEScanCallbacks {
         x.rssi = d->getRSSI();
         x.is_public = (addr.getType() == BLE_ADDR_PUBLIC);
         x.name[0] = '\0';
+        x.extra[0] = '\0';
         if (d->haveName()) sanitize(d->getName().c_str(), x.name, sizeof(x.name));
         classify(d, x.type, sizeof(x.type));
+        decode_extra_telemetry(d, x.extra, sizeof(x.extra));
     }
 };
 
@@ -349,8 +414,10 @@ static void start_scan(bool reset_controller = false)
             x.rssi      = device->getRSSI();
             x.is_public = (addr.getType() == BLE_ADDR_PUBLIC);
             x.name[0]   = '\0';
+            x.extra[0]  = '\0';
             if (device->haveName()) sanitize(device->getName().c_str(), x.name, sizeof(x.name));
             classify(device, x.type, sizeof(x.type));
+            decode_extra_telemetry(device, x.extra, sizeof(x.extra));
         }
     };
 
@@ -530,33 +597,46 @@ void feat_ble_scan(void)
             auto &d = M5Cardputer.Display;
             ui_clear_body();
             d.setTextColor(T_ACCENT, T_BG);
-            d.setCursor(4, BODY_Y + 2); d.print("BLE DEVICE");
-            d.drawFastHLine(4, BODY_Y + 12, 100, T_ACCENT);
+            d.setCursor(4, BODY_Y + 2); d.print("BLE DEVICE INFO");
+            d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
             d.setTextColor(T_FG, T_BG);
-            d.setCursor(4, BODY_Y + 18);
-            d.printf("MAC  : %02X:%02X:%02X:%02X:%02X:%02X",
+            d.setCursor(4, BODY_Y + 15);
+            d.printf("MAC  : %02X:%02X:%02X:%02X:%02X:%02X (%s)",
                      x.addr[0], x.addr[1], x.addr[2],
-                     x.addr[3], x.addr[4], x.addr[5]);
-            d.setCursor(4, BODY_Y + 30); d.printf("TYPE : %s", x.type);
-            d.setCursor(4, BODY_Y + 42); d.printf("NAME : %.28s", x.name[0] ? x.name : "(unnamed)");
-            d.setCursor(4, BODY_Y + 54); d.printf("ADDR : %s", x.is_public ? "public" : "random");
+                     x.addr[3], x.addr[4], x.addr[5],
+                     x.is_public ? "public" : "random");
+            d.setTextColor(T_ACCENT2, T_BG);
+            d.setCursor(4, BODY_Y + 26); d.printf("TYPE : %s", x.type);
+            d.setTextColor(T_FG, T_BG);
+            d.setCursor(4, BODY_Y + 37); d.printf("NAME : %.28s", x.name[0] ? x.name : "(unnamed)");
+            if (x.extra[0]) {
+                d.setTextColor(T_GOOD, T_BG);
+                d.setCursor(4, BODY_Y + 48);
+                d.printf("INFO : %.28s", x.extra);
+            } else {
+                uint32_t oui = ((uint32_t)x.addr[0] << 16) | ((uint32_t)x.addr[1] << 8) | x.addr[2];
+                const char *v = x.is_public ? ble_db_oui(oui) : nullptr;
+                d.setTextColor(T_DIM, T_BG);
+                d.setCursor(4, BODY_Y + 48);
+                d.printf("VEN  : %s", v ? v : "(random / unlisted)");
+            }
 
-            /* Signal strength bar: -100 dBm → empty, -30 dBm → full. */
-            int bar_w = 120;
+            /* Signal strength bar */
+            int bar_w = 110;
             int pct = (x.rssi + 100) * 100 / 70;
             if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-            d.setCursor(4, BODY_Y + 64); d.printf("RSSI : %d dBm", x.rssi);
-            d.drawRect(90, BODY_Y + 64, bar_w, 7, T_DIM);
+            d.setTextColor(T_FG, T_BG);
+            d.setCursor(4, BODY_Y + 60); d.printf("RSSI : %d dBm", x.rssi);
+            d.drawRect(95, BODY_Y + 60, bar_w, 7, T_DIM);
             uint16_t col = (x.rssi > -60) ? T_GOOD : (x.rssi > -80) ? T_WARN : T_BAD;
-            d.fillRect(91, BODY_Y + 65, (bar_w - 2) * pct / 100, 5, col);
+            d.fillRect(96, BODY_Y + 61, (bar_w - 2) * pct / 100, 5, col);
 
-            /* Action legend in the BODY (full width, 2 lines) so nothing
-             * clips off the footer. T=track is the RSSI hot/cold finder. */
+            /* Action legend in the BODY */
             d.setTextColor(T_ACCENT2, T_BG);
-            d.setCursor(4, BODY_Y + 78);
-            d.print("T=track  W=whisper  H=hid  G=gatt");
-            d.setCursor(4, BODY_Y + 88);
-            d.print("X=flood  P=spam  C=clone   `=back");
+            d.setCursor(4, BODY_Y + 74);
+            d.print("T=track  G=gatt  W=whisper  H=hid");
+            d.setCursor(4, BODY_Y + 85);
+            d.print("X=flood  P=spam  C=clone    `=back");
             ui_draw_footer("pick an action");
             while (true) {
                 uint16_t k2 = input_poll();

@@ -126,6 +126,7 @@ extern void feat_badusb_pranks(void);
 extern void feat_kerberos(void);
 extern void feat_net_portscan(void);
 extern void feat_net_ping(void);
+extern void feat_net_pingsweep(void);
 extern void feat_net_dns(void);
 extern void feat_net_responder(void);
 extern void feat_net_ssdp(void);
@@ -487,6 +488,9 @@ static const menu_node_t MENU_NET[] = {
     { 'p', "Port scan", "TCP portscan a host", nullptr, feat_net_portscan,
       "Connects to a range of TCP ports on a host IP/name. Requires you be "
       "joined to a WiFi network first (use Network -> Connect)." },
+    { 'w', "Ping Sweep", "Live /24 subnet active host grid", nullptr, feat_net_pingsweep,
+      "Fast ICMP sweep of the active /24 subnet. Displays a live 16x16 visual "
+      "grid of active and responding hosts on the LAN." },
     { 'i', "Ping", "ICMP echo loop", nullptr, feat_net_ping,
       "Live ping. Shows round-trip time and sequence. Runs until you ESC. "
       "Requires STA connection first." },

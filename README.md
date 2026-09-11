@@ -18,12 +18,14 @@
 ![target](https://img.shields.io/badge/target-Cardputer--Adv-red?style=flat-square)
 ![platform](https://img.shields.io/badge/framework-Arduino%2FPlatformIO-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![features](https://img.shields.io/badge/features-164-magenta?style=flat-square)
+![features](https://img.shields.io/badge/features-170+-magenta?style=flat-square)
 ![release](https://img.shields.io/github/v/release/GeneralDussDuss/poseidon?style=flat-square)
-![version](https://img.shields.io/badge/version-0.6.8-cyan?style=flat-square)
+![version](https://img.shields.io/badge/version-0.7.0-cyan?style=flat-square)
 ![security key](https://img.shields.io/badge/KERBEROS-FIDO2%20(WIP)-f59e0b?style=flat-square)
 
-**163 attacks in your pocket — WiFi, BLE, sub-GHz, 2.4 GHz, LoRa, IR, and LAN — driven by a real QWERTY keyboard.**
+> ⚡ **Custom Community Edition:** Forked and enhanced from GeneralDussDuss/poseidon with dedicated real-time surveillance detection (Flock ALPR / ShotSpotter Raven), Triton RPG gotchi leveling & persistent XP, expanded 11-theme palette & 13 screensavers, on-device hex/log viewers, GATT notification streaming, and rich device/OS fingerprinting.
+
+**170+ attacks & recon tools in your pocket — WiFi, BLE, sub-GHz, 2.4 GHz, LoRa, IR, and LAN — driven by a real QWERTY keyboard.**
 POSEIDON turns the M5Stack Cardputer-Advance into a keyboard-first hacking deck: type to navigate, type your parameters, and watch **Argus** — an autonomous handshake-hunting gotchi with a 96x96 mood sprite — work the airwaves while you do. Same family as Flipper Zero, Bruce, Evil-M5Project, and Marauder, but built around a keyboard instead of a D-pad.
 
 [**Flash it now →**](#quick-start--flash-it) · [Download latest .bin](https://github.com/GeneralDussDuss/poseidon/releases/latest) · [Web site](https://generaldussduss.github.io/poseidon) · [Changelog](CHANGELOG.md)

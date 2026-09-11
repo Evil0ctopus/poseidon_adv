@@ -151,9 +151,19 @@ static void draw_bars(void)
     const int bar_w  = 16;
     const int gap    = 2;
     const int top    = BODY_Y + 18;
-    const int bottom = FOOTER_Y - 10;
+    const int bottom = FOOTER_Y - 14;
     const int height = bottom - top;
     const int start_x = (SCR_W - (13 * (bar_w + gap))) / 2;
+
+    /* Find cleanest and busiest channels */
+    int cleanest_ch = 1;
+    int busiest_ch  = 1;
+    int8_t min_rssi = 127;
+    int8_t max_rssi = -128;
+    for (int c = 1; c <= 13; ++c) {
+        if (s_peak[c] < min_rssi) { min_rssi = s_peak[c]; cleanest_ch = c; }
+        if (s_peak[c] > max_rssi) { max_rssi = s_peak[c]; busiest_ch = c; }
+    }
 
     if (first) {
         ui_clear_body();
@@ -172,6 +182,13 @@ static void draw_bars(void)
         for (int c = 0; c <= CH_N; ++c) last_peak[c] = -127;
         first = false;
     }
+
+    /* Channel utilization banner */
+    d.setCursor(110, BODY_Y + 2);
+    d.setTextColor(T_GOOD, T_BG);
+    d.printf("Clean:ch%-2d", cleanest_ch);
+    d.setTextColor(T_BAD, T_BG);
+    d.printf(" Busy:ch%-2d", busiest_ch);
 
     /* Update only bars that changed. */
     for (int c = 1; c <= 13; ++c) {
@@ -195,8 +212,12 @@ static void draw_bars(void)
         d.drawFastVLine(x + bar_w / 2 - 1, top, height, 0x0841);
         d.fillRect(x, bottom - bh, bar_w, bh, color);
 
+        /* Peak Hold Line */
+        d.drawFastHLine(x, bottom - bh, bar_w, T_FG);
+
         /* Channel number colour tracks current-selected highlight. */
-        d.setTextColor(c == s_current_ch ? T_ACCENT : T_DIM, T_BG);
+        uint16_t ch_col = (c == s_current_ch) ? T_ACCENT : (c == cleanest_ch ? T_GOOD : (c == busiest_ch ? T_BAD : T_DIM));
+        d.setTextColor(ch_col, T_BG);
         d.fillRect(x, bottom + 1, bar_w, 8, T_BG);
         d.setCursor(x + (c < 10 ? bar_w / 2 - 3 : bar_w / 2 - 6), bottom + 1);
         d.printf("%d", c);

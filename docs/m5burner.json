@@ -7,6 +7,20 @@
   "icon": "https://generaldussduss.github.io/poseidon/assets/icon.png",
   "firmware": [
     {
+      "name": "POSEIDON v0.7.0",
+      "version": "0.7.0",
+      "chip": "esp32s3",
+      "target": "M5Cardputer-Adv",
+      "flash_size": "8MB",
+      "psram": true,
+      "url": "https://github.com/GeneralDussDuss/poseidon/releases/download/v0.7.0/poseidon-factory.bin",
+      "offset": "0x0",
+      "description": "v0.7.0 Community Enhanced Release: Real-time surveillance detection (Flock ALPR / ShotSpotter Raven) integrated into Wardrive with Argus rage reactions. Triton RPG gotchi leveling + persistent XP ranks. 11 Cyberpunk themes with scrolling window & 13 screensavers. Full-width 42-column matrix rain, status bar battery indicator, GATT notification streaming & SD dump, and deep OS/device fingerprinting.",
+      "date": "2026-09-11",
+      "changelog": "https://github.com/GeneralDussDuss/poseidon/blob/master/CHANGELOG.md",
+      "license": "MIT"
+    },
+    {
       "name": "POSEIDON v0.6.3",
       "version": "0.6.3",
       "chip": "esp32s3",

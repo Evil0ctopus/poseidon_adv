@@ -14,6 +14,7 @@
 #include "ui.h"
 #include "input.h"
 #include "radio.h"
+#include "../sfx.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <HTTPClient.h>
@@ -27,6 +28,10 @@ struct ssdp_dev_t {
     char location[96];
     char friendly[40];
     char model[32];
+    char manufacturer[32];
+    char model_number[24];
+    char device_type[32];
+    char pres_url[64];
 };
 
 static ssdp_dev_t s_dev[MAX_DEV];
@@ -65,10 +70,57 @@ static void fetch_desc(ssdp_dev_t *d)
     int code = http.GET();
     if (code == 200) {
         String body = http.getString();
-        extract_tag(body, "friendlyName", d->friendly, sizeof(d->friendly));
-        extract_tag(body, "modelName",    d->model,    sizeof(d->model));
+        extract_tag(body, "friendlyName",    d->friendly,     sizeof(d->friendly));
+        extract_tag(body, "modelName",       d->model,        sizeof(d->model));
+        extract_tag(body, "manufacturer",    d->manufacturer, sizeof(d->manufacturer));
+        extract_tag(body, "modelNumber",     d->model_number, sizeof(d->model_number));
+        extract_tag(body, "deviceType",      d->device_type,  sizeof(d->device_type));
+        extract_tag(body, "presentationURL", d->pres_url,     sizeof(d->pres_url));
     }
     http.end();
+}
+
+static void show_device_detail(const ssdp_dev_t &e)
+{
+    auto &d = M5Cardputer.Display;
+    ui_clear_body();
+    d.setTextColor(T_ACCENT, T_BG);
+    d.setCursor(4, BODY_Y + 2); d.print("UPnP DEVICE DETAILS");
+    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+
+    d.setTextColor(T_GOOD, T_BG);
+    d.setCursor(4, BODY_Y + 16);
+    d.printf("NAME : %.28s", e.friendly[0] ? e.friendly : "(unnamed)");
+
+    d.setTextColor(T_FG, T_BG);
+    d.setCursor(4, BODY_Y + 28);
+    d.printf("IP   : %s", e.ip);
+
+    d.setTextColor(T_ACCENT2, T_BG);
+    d.setCursor(4, BODY_Y + 40);
+    d.printf("MFR  : %.28s", e.manufacturer[0] ? e.manufacturer : "Unknown");
+
+    d.setTextColor(T_FG, T_BG);
+    d.setCursor(4, BODY_Y + 52);
+    d.printf("MODEL: %.20s %s", e.model[0] ? e.model : "?", e.model_number[0] ? e.model_number : "");
+
+    d.setTextColor(T_DIM, T_BG);
+    d.setCursor(4, BODY_Y + 64);
+    d.printf("TYPE : %.28s", e.device_type[0] ? e.device_type : "urn:schemas-upnp-org");
+
+    d.setTextColor(T_WARN, T_BG);
+    d.setCursor(4, BODY_Y + 76);
+    if (e.pres_url[0]) d.printf("WEB  : %.28s", e.pres_url);
+    else               d.printf("LOC  : %.28s", e.location);
+
+    ui_draw_footer("`=back to list");
+    sfx_select();
+
+    while (true) {
+        uint16_t k = input_poll();
+        if (k == PK_NONE) { delay(20); continue; }
+        if (k == PK_ESC) break;
+    }
 }
 
 void feat_net_ssdp(void)
@@ -172,19 +224,19 @@ void feat_net_ssdp(void)
     /* Scroll list. */
     int cursor = 0;
     int last_cursor = -1;
-    ui_draw_footer(";/. move  `=back");
+    ui_draw_footer(";/.=move ENTER=info S=save `=back");
     while (true) {
       if (cursor != last_cursor) {
         last_cursor = cursor;
         ui_clear_body();
         d.setTextColor(T_ACCENT, T_BG);
         d.setCursor(4, BODY_Y + 2);
-        d.printf("UPnP %d devices", s_dev_n);
-        d.drawFastHLine(4, BODY_Y + 12, 100, T_ACCENT);
+        d.printf("UPnP / SSDP  %d devices", s_dev_n);
+        d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
         if (s_dev_n == 0) {
             d.setTextColor(T_DIM, T_BG);
             d.setCursor(4, BODY_Y + 24);
-            d.print("nothing found");
+            d.print("no UPnP devices found on LAN");
         } else {
             int rows = 7;
             if (cursor < 0) cursor = 0;
@@ -193,16 +245,16 @@ void feat_net_ssdp(void)
             if (first < 0) first = 0;
             if (first + rows > s_dev_n) first = max(0, s_dev_n - rows);
             for (int r = 0; r < rows && first + r < s_dev_n; ++r) {
-                int y = BODY_Y + 18 + r * 12;
+                int y = BODY_Y + 18 + r * 11;
                 bool sel = (first + r == cursor);
-                if (sel) d.fillRect(0, y - 1, SCR_W, 12, 0x3007);
+                if (sel) d.fillRect(0, y - 1, SCR_W, 11, 0x18C7);
                 const ssdp_dev_t &e = s_dev[first + r];
-                d.setTextColor(sel ? 0xF81F : T_FG, sel ? 0x3007 : T_BG);
+                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? 0x18C7 : T_BG);
                 d.setCursor(4, y);
                 d.printf("%-15s", e.ip);
-                d.setTextColor(sel ? 0xFFFF : T_ACCENT, sel ? 0x3007 : T_BG);
-                d.setCursor(100, y);
-                d.printf("%.22s", e.friendly[0] ? e.friendly : e.model[0] ? e.model : "?");
+                d.setTextColor(sel ? 0xFFFF : (e.manufacturer[0] ? T_GOOD : T_ACCENT), sel ? 0x18C7 : T_BG);
+                d.setCursor(102, y);
+                d.printf("%.22s", e.friendly[0] ? e.friendly : (e.model[0] ? e.model : "?"));
             }
         }
       }
@@ -211,5 +263,37 @@ void feat_net_ssdp(void)
         if (k == PK_ESC) return;
         if (k == ';' || k == PK_UP)   { if (cursor > 0) cursor--; }
         if (k == '.' || k == PK_DOWN) { if (cursor + 1 < s_dev_n) cursor++; }
+        if (k == PK_ENTER && s_dev_n > 0 && cursor < s_dev_n) {
+            show_device_detail(s_dev[cursor]);
+            last_cursor = -1;  /* force redraw list */
+            ui_draw_footer(";/.=move ENTER=info S=save `=back");
+        }
+        if ((k == 's' || k == 'S') && s_dev_n > 0) {
+            if (sd_mount()) {
+                sd_ensure_layout();
+                char path[64];
+                snprintf(path, sizeof(path), SD_WIFI_CAPTURE_DIR "/ssdp-%lu.csv", (unsigned long)(millis() / 1000));
+                SD.mkdir(SD_WIFI_CAPTURE_DIR);
+                File f = SD.open(path, FILE_WRITE);
+                if (f) {
+                    f.println("ip,friendly,manufacturer,model,model_number,device_type,location,presentation_url");
+                    for (int i = 0; i < s_dev_n; ++i) {
+                        f.printf("%s,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
+                                 s_dev[i].ip, s_dev[i].friendly, s_dev[i].manufacturer,
+                                 s_dev[i].model, s_dev[i].model_number, s_dev[i].device_type,
+                                 s_dev[i].location, s_dev[i].pres_url);
+                    }
+                    f.close();
+                    sfx_capture();
+                    ui_toast("Saved UPnP CSV", T_GOOD, 800);
+                } else {
+                    ui_toast("File write failed", T_BAD, 800);
+                }
+            } else {
+                ui_toast("No SD card", T_WARN, 800);
+            }
+            last_cursor = -1;
+            ui_draw_footer(";/.=move ENTER=info S=save `=back");
+        }
     }
 }

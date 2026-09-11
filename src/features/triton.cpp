@@ -38,6 +38,7 @@
 #include <esp_netif.h>
 #include <esp_event.h>
 #include <SD.h>
+#include <Preferences.h>
 #include "../sd_helper.h"
 #include "../argus.h"
 
@@ -91,6 +92,67 @@ static const char *mode_blurb(triton_mode_t m) {
     case TM_STORM:    return "max aggression, every 1s";
     }
     return "";
+}
+
+/* ---- XP / Leveling & Lifetime Stats ---- */
+static uint32_t s_triton_xp = 0;
+static uint16_t s_triton_level = 1;
+static uint32_t s_lifetime_catches = 0;
+static volatile bool s_level_up_pending = false;
+
+static const char *triton_rank_title(uint16_t lvl)
+{
+    if (lvl <= 1) return "Novice";
+    if (lvl == 2) return "Scout";
+    if (lvl == 3) return "Stalker";
+    if (lvl == 4) return "Hunter";
+    if (lvl == 5) return "Predator";
+    if (lvl == 6) return "Phantom";
+    if (lvl == 7) return "Specter";
+    if (lvl == 8) return "Wraith";
+    if (lvl == 9) return "Kraken";
+    return "Leviathan";
+}
+
+static inline uint32_t triton_req_xp(uint16_t lvl)
+{
+    return (uint32_t)lvl * 150;
+}
+
+static void triton_xp_load(void)
+{
+    Preferences p;
+    if (p.begin("triton_xp", true)) {
+        s_triton_xp = p.getUInt("xp", 0);
+        s_triton_level = p.getUShort("lvl", 1);
+        s_lifetime_catches = p.getUInt("catches", 0);
+        p.end();
+    }
+    if (s_triton_level < 1) s_triton_level = 1;
+}
+
+static void triton_xp_save(void)
+{
+    Preferences p;
+    if (p.begin("triton_xp", false)) {
+        p.putUInt("xp", s_triton_xp);
+        p.putUShort("lvl", s_triton_level);
+        p.putUInt("catches", s_lifetime_catches);
+        p.end();
+    }
+}
+
+static void triton_add_xp(uint32_t pts)
+{
+    s_triton_xp += pts;
+    uint32_t req = triton_req_xp(s_triton_level);
+    while (s_triton_xp >= req) {
+        s_triton_xp -= req;
+        s_triton_level++;
+        s_level_up_pending = true;
+        req = triton_req_xp(s_triton_level);
+    }
+    triton_xp_save();
 }
 
 /* ---- adaptive learning (lightweight RL) ----
@@ -411,6 +473,8 @@ static void emit_pmkid(const uint8_t *pmkid, const uint8_t *bssid, const uint8_t
     capture_enqueue(s_emit_pmk);
     wdr_append(bssid, ssid, "EAPOL_PMKID");
     s_pmk++;
+    s_lifetime_catches++;
+    triton_add_xp(50);
     s_last_catch = millis();
     triton_reward(s_ch);
     triton_say(VOICE_PICK(VOICE_PMK_CATCH));
@@ -439,6 +503,8 @@ static void emit_hs(const uint8_t *bssid, const uint8_t *sta,
     capture_enqueue(line);
     wdr_append(bssid, ssid, "EAPOL_HS");
     s_hs++;
+    s_lifetime_catches++;
+    triton_add_xp(150);
     s_last_catch = millis();
     triton_reward(s_ch);
     triton_say(VOICE_PICK(VOICE_HS_CATCH));
@@ -1118,6 +1184,7 @@ void feat_triton(void)
     ui_radar(SCR_W - 24, BODY_Y + 28, 10, T_ACCENT);  /* advance sweep */
 
     triton_learn_load();
+    triton_xp_load();
     ui_radar(SCR_W - 24, BODY_Y + 28, 10, T_ACCENT);  /* advance sweep */
     s_pmk = 0; s_hs = 0; s_eapol = 0; s_deauth_frames = 0;
     s_bs_n = 0; s_m1_n = 0;
@@ -1342,96 +1409,71 @@ void feat_triton(void)
                 Serial.printf("[triton] voice='%s' mood=%d\n", w, (int)mood);
             }
 
+            /* Level up one-shot event */
+            if (s_level_up_pending) {
+                s_level_up_pending = false;
+                sfx_cracked();
+                argus_flash(ARGUS_PLEASED, 2500);
+                char lmsg[24];
+                snprintf(lmsg, sizeof(lmsg), "LVL %u %s!", s_triton_level, triton_rank_title(s_triton_level));
+                triton_say(lmsg, 4000);
+            }
+
             /* ---- RIGHT ZONE: title + stats + sparkline ---- */
             int rx = 114;
 
             /* Header: ARGUS + mode + C5 dot. */
             d.setTextColor(T_ACCENT, T_BG);
-            d.setCursor(rx, BODY_Y + 4); d.print("ARGUS");
+            d.setCursor(rx, BODY_Y + 2); d.print("ARGUS");
             d.setTextColor(T_ACCENT2, T_BG);
-            d.setCursor(rx + 58, BODY_Y + 4); d.print(mode_name(s_mode));
-            if (c5_online) d.fillCircle(236, BODY_Y + 7, 3, T_GOOD);
-            d.drawFastHLine(rx, BODY_Y + 14, 122, T_ACCENT);
+            d.setCursor(rx + 58, BODY_Y + 2); d.print(mode_name(s_mode));
+            if (c5_online) d.fillCircle(236, BODY_Y + 5, 3, T_GOOD);
+            d.drawFastHLine(rx, BODY_Y + 12, 122, T_ACCENT);
 
-            /* Channel + TX indicator. Fixed-width %-3u so a digit drop
-             * (13 → 6) doesn't leave the "3" visible (was rendering
-             * like "ch: 63" / "ch: 80" with stale digits). */
+            /* Channel + Level */
             d.setTextColor(T_FG, T_BG);
-            d.setCursor(rx, BODY_Y + 18); d.printf("ch: %-3u", (unsigned)s_ch);
-            /* Blink TX dot when in an active deauth mode. */
+            d.setCursor(rx, BODY_Y + 16); d.printf("ch:%-2u", (unsigned)s_ch);
             if (s_mode != TM_STEALTH && ((now / 250) & 1))
-                d.fillCircle(rx + 50, BODY_Y + 21, 2, T_BAD);
-            if (s_mode == TM_STEALTH)
-                d.setCursor(rx + 46, BODY_Y + 18), d.setTextColor(T_DIM, T_BG), d.print("RX");
-
-            /* APs + deauth frame counter — fixed-width formats so the
-             * char-bg from setTextColor overwrites any prior digits.
-             * No fillRect needed → no clear-redraw flicker. */
-            d.setTextColor(T_FG, T_BG);
-            d.setCursor(rx, BODY_Y + 28); d.printf("APs: %-3d", (int)s_bs_n);
-            d.setTextColor(s_deauth_frames > 0 ? T_BAD : T_DIM, T_BG);
-            d.setCursor(rx, BODY_Y + 38);
-            d.printf("TX:  %-9lu", (unsigned long)s_deauth_frames);
-
-            /* rc indicator — sentinels tell us which gate is blocking.
-             *  -999 = never reached the burst window predicate
-             *         (hop_task crashed, or mode/phase gating off)
-             *  -100 = entered burst window but BSSID branch skipped
-             *  -101 = entered burst window, BSSID cache was empty
-             *  -OTHER = real return code from esp_wifi_80211_tx
-             *           (0=OK, 257=NO_MEM, 258=INVALID_ARG, 12289=NOT_INIT) */
-            if (s_deauth_frames == 0) {
-                extern volatile int wifi_deauth_last_rc;
-                int last_rc = wifi_deauth_last_rc;
-                d.setTextColor(T_WARN, T_BG);
-                d.setCursor(rx + 50, BODY_Y + 38);
-                /* Sentinel decoder:
-                 *   -999 = hop_task NEVER ran (xTaskCreate fail)
-                 *   -200 = hop_task started, while loop never entered
-                 *   -50  = while loop iterates, predicate never satisfied
-                 *   -100 = predicate OK, entered burst window
-                 *   -101 = entered window, BSSID cache empty
-                 *   other = real esp_wifi_80211_tx rc */
-                if      (last_rc == -999) d.print("nostart ");
-                else if (last_rc <= -1000) d.printf("xTC%dKB ", -(last_rc + 1000));  /* shows internal RAM kB at failure */
-                else if (last_rc == -300) d.print("xTC-fail");
-                else if (last_rc == -201) d.print("spawned ");
-                else if (last_rc == -200) d.print("no-loop ");
-                else if (last_rc == -50)  d.print("no-pred ");
-                else if (last_rc == -100) d.print("win-skip");
-                else if (last_rc == -101) d.print("no-bss  ");
-                else                      d.printf("rc=%-5d", last_rc);
+                d.fillCircle(rx + 36, BODY_Y + 19, 2, T_BAD);
+            if (s_mode == TM_STEALTH) {
+                d.setCursor(rx + 34, BODY_Y + 16); d.setTextColor(T_DIM, T_BG); d.print("RX");
             }
-            /* hop_task iteration counter — if this stays at the same
-             * value across redraws, hop_task has crashed or hung and
-             * we know to look there. If it climbs but TX stays 0, the
-             * issue is downstream in the deauth path. */
-            d.setTextColor(T_DIM, T_BG);
-            d.setCursor(rx, BODY_Y + 96);
-            d.printf("it: %-6lu", (unsigned long)s_hop_iter);
+            d.setTextColor(T_GOOD, T_BG);
+            d.setCursor(rx + 48, BODY_Y + 16); d.printf("L%-2u %-7.7s", s_triton_level, triton_rank_title(s_triton_level));
 
+            /* APs + XP */
+            d.setTextColor(T_FG, T_BG);
+            d.setCursor(rx, BODY_Y + 26); d.printf("APs:%-3d", (int)s_bs_n);
+            uint32_t req_xp = triton_req_xp(s_triton_level);
+            d.setTextColor(T_ACCENT2, T_BG);
+            d.setCursor(rx + 48, BODY_Y + 26); d.printf("XP:%lu/%lu", (unsigned long)s_triton_xp, (unsigned long)req_xp);
+
+            /* TX + PMK */
+            d.setTextColor(s_deauth_frames > 0 ? T_BAD : T_DIM, T_BG);
+            d.setCursor(rx, BODY_Y + 36);
+            d.printf("TX: %-5lu", (unsigned long)s_deauth_frames);
             d.setTextColor(s_pmk > 0 ? T_GOOD : T_DIM, T_BG);
-            d.setCursor(rx, BODY_Y + 48); d.printf("PMK: %-9lu", (unsigned long)s_pmk);
+            d.setCursor(rx + 62, BODY_Y + 36); d.printf("PMK:%-3lu", (unsigned long)s_pmk);
 
             /* HS — the hero stat. Flash row on capture. */
             static uint32_t hs_flash_until = 0;
             if (s_hs > 0 && now < stoked_until) hs_flash_until = now + 500;
             bool hs_flash = (now < hs_flash_until) && ((now / 100) & 1);
-            if (hs_flash) d.fillRect(rx - 2, BODY_Y + 56, 126, 12, T_ACCENT);
+            if (hs_flash) d.fillRect(rx - 2, BODY_Y + 46, 126, 11, T_ACCENT);
             d.setTextColor(hs_flash ? T_BG : (s_hs > 0 ? T_ACCENT : T_FG),
                            hs_flash ? T_ACCENT : T_BG);
-            d.setCursor(rx, BODY_Y + 58); d.printf("HS:  %-9lu", (unsigned long)s_hs);
+            d.setCursor(rx, BODY_Y + 47); d.printf("HS: %-4lu Tot:%-4lu", (unsigned long)s_hs, (unsigned long)s_lifetime_catches);
 
             /* Channel quality sparkline — 13 bars for the RL brain. */
-            int spark_y = BODY_Y + 74;
+            int spark_y = BODY_Y + 62;
             d.setTextColor(T_DIM, T_BG);
-            d.setCursor(rx, spark_y - 8); d.print("RL:");
+            d.setCursor(rx, spark_y - 2); d.print("RL:");
             for (int i = 1; i <= 13; i++) {
                 int bx = rx + 20 + (i - 1) * 8;
                 int bh = (int)(s_q[i] * 12);
                 if (bh < 1) bh = 1;
                 if (bh > 12) bh = 12;
-                uint16_t bc = (i == (int)s_ch) ? T_ACCENT : T_DIM;
+                uint16_t bc = (i == (int)s_ch) ? T_ACCENT : (s_wins[i] > 0 ? T_GOOD : T_DIM);
                 d.fillRect(bx, spark_y + 12 - bh, 6, bh, bc);
                 d.drawRect(bx, spark_y, 6, 12, 0x2104);
             }
@@ -1485,6 +1527,8 @@ void feat_triton(void)
                 }
                 wdr_append(hs[i].bssid, ssid, "EAPOL_HS_5G");
                 s_hs++;
+                s_lifetime_catches++;
+                triton_add_xp(150);
             }
             /* Don't auto-rescan on every HS drain. Frequent HS arrivals
              * were firing c5_cmd_scan_5g 7+ times in 20 s, saturating
@@ -1515,6 +1559,7 @@ void feat_triton(void)
     capture_flush();
     wdr_flush();
     triton_learn_save();
+    triton_xp_save();
     if (s_file)     { s_file.flush();     s_file.close(); }
     if (s_wdr_file) { s_wdr_file.flush(); s_wdr_file.close(); }
     gps_end();

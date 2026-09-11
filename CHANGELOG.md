@@ -4,21 +4,22 @@ All notable changes to POSEIDON are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-09-11
 
-### Changed
-
-- Generated SD output is organized under `/poseidon/captures/` by feature
-  (`wardrive`, `ble`, `surveillance`, `defmon`, `wifi`, and `subghz`) and
-  credential logs now live under `/poseidon/credentials/`. Existing root-level
-  files remain untouched and TRIDENT retains backward-compatible reads.
+### Added
+- **Wardrive Live Surveillance Alarm:** Integrated real-time Flock Safety ALPR camera and ShotSpotter Raven sensor fingerprinting directly into Wardrive with siren tone alarms (`sfx_alert`), matrix alert banners, and Argus rage mood flashes.
+- **Triton RPG Gotchi Leveling & XP:** Persistent 10-rank leveling progression (`Novice` to `Leviathan`) with XP earned on PMKIDs/Handshakes and NVS brain persistence.
+- **GATT Explorer Suite:** Human-readable Bluetooth SIG service and characteristic name resolution, live notification streaming (`N`), and full profile SD tree dumps (`S`).
+- **New Captive Portals:** Starlink, Tesla Supercharger, and Router Security Update phishing templates with real-time on-screen credential overlay popups.
+- **Enhanced WiFi Recon & OS Fingerprinting:** DHCP Option 60/55 OS detection on clients (iOS, Android, Windows, Linux), Probe Sniffer auto-channel hopper (1–13), and Client Signal Geiger proximity counter (`H`).
+- **Network Recon Suite:** 16x16 visual grid Subnet Ping Sweep (`/24`), UPnP/SSDP XML device details inspector, and port scanner banner grabbing.
+- **IR Protocol Learning & Decoder:** Live decoding of NEC, Samsung, and Sony SIRC protocols with instant replay (`R`) and SD saving (`S`).
+- **Visuals & Audio:** 11 cybernetic themes with a scrollable 6-row window, 13 screensavers (including Sat Skyplot, SDR Waterfall, Starfield Warp), 4 audio profiles (Cyberpunk, 8-Bit, Minimal, SDR Radio), and a top status bar battery percentage/charging indicator.
 
 ### Fixed
-
-- CCTV LAN sweeps now require camera-specific HTTP or RTSP evidence instead of
-  counting every web server as a camera. The scanner avoids unsupported TLS
-  probes, reduces dead-host socket churn, supports aborts inside long probes,
-  and stops safely if internal heap approaches the crash threshold.
+- Fixed Wardrive AP counter starting at zero on boot.
+- Fixed Wardrive audio click cues dying after 256 in-RAM AP cache rollover.
+- Fixed Matrix Rain screensaver spanning only half the screen; now spans all 42 columns across the full 240px width.
 
 ## [0.6.8] - 2026-07-03
 

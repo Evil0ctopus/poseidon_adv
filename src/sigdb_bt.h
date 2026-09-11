@@ -143,6 +143,38 @@ static inline const char *bt_svc_name(uint16_t uuid)
     return nullptr;
 }
 
+/* ---- Standard GATT Characteristic UUIDs (0x2Axx) ---- */
+static const bt_svc_t BT_CHAR[] = {
+    { 0x2A00, "Device Name" },
+    { 0x2A01, "Appearance" },
+    { 0x2A04, "Pref Conn Param" },
+    { 0x2A05, "Service Changed" },
+    { 0x2A19, "Battery Level" },
+    { 0x2A24, "Model Number" },
+    { 0x2A25, "Serial Number" },
+    { 0x2A26, "Firmware Rev" },
+    { 0x2A27, "Hardware Rev" },
+    { 0x2A28, "Software Rev" },
+    { 0x2A29, "Manufacturer" },
+    { 0x2A37, "Heart Rate Measurement" },
+    { 0x2A38, "Body Sensor Location" },
+    { 0x2A4A, "HID Info" },
+    { 0x2A4B, "Report Map" },
+    { 0x2A4C, "HID Control Point" },
+    { 0x2A4D, "Report" },
+    { 0x2A4E, "Protocol Mode" },
+    { 0x2A6E, "Temperature" },
+    { 0x2A6F, "Humidity" },
+};
+static const int BT_CHAR_N = sizeof(BT_CHAR) / sizeof(BT_CHAR[0]);
+
+static inline const char *bt_char_name(uint16_t uuid)
+{
+    for (int i = 0; i < BT_CHAR_N; i++)
+        if (BT_CHAR[i].uuid == uuid) return BT_CHAR[i].name;
+    return nullptr;
+}
+
 /* ---- Common appearance category prefixes (10-bit category, lower 6
  * are sub-type and ignored here for compactness) ---- */
 static const bt_svc_t BT_APPEARANCE[] = {

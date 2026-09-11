@@ -197,6 +197,99 @@ static void fb_list(const char *path)
     }
 }
 
+static void fb_view_file(const char *filepath, const char *filename)
+{
+    File f = SD.open(filepath, FILE_READ);
+    if (!f) { ui_toast("cant open file", T_BAD, 1000); return; }
+
+    auto &d = M5Cardputer.Display;
+    const int rows = 8;
+    int line_offset = 0;
+    bool hex_mode = false;
+
+    /* Check if binary extension */
+    const char *dot = strrchr(filename, '.');
+    if (dot && (!strcasecmp(dot, ".bin") || !strcasecmp(dot, ".pcap") || !strcasecmp(dot, ".dat"))) {
+        hex_mode = true;
+    }
+
+    auto render = [&]() {
+        ui_clear_body();
+        d.setTextColor(T_ACCENT, T_BG);
+        d.setCursor(4, BODY_Y + 2);
+        d.printf("VIEW: %.22s (%s)", filename, hex_mode ? "HEX" : "TXT");
+        d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+
+        if (!hex_mode) {
+            /* Text mode: seek to line */
+            f.seek(0);
+            int cur_line = 0;
+            String l;
+            while (cur_line < line_offset && f.available()) {
+                l = f.readStringUntil('\n');
+                cur_line++;
+            }
+            int drawn = 0;
+            while (drawn < rows && f.available()) {
+                l = f.readStringUntil('\n');
+                l.trim();
+                int y = BODY_Y + 16 + drawn * 11;
+                d.setTextColor(T_DIM, T_BG);
+                d.setCursor(2, y);
+                d.printf("%-3d", cur_line + drawn + 1);
+                d.setTextColor(T_FG, T_BG);
+                d.setCursor(24, y);
+                d.printf("%.34s", l.c_str());
+                drawn++;
+            }
+            if (drawn == 0 && line_offset == 0) {
+                d.setTextColor(T_DIM, T_BG);
+                d.setCursor(4, BODY_Y + 24);
+                d.print("(empty file)");
+            }
+        } else {
+            /* Hex mode */
+            f.seek(line_offset * 8);
+            for (int r = 0; r < rows && f.available(); r++) {
+                uint32_t pos = (uint32_t)f.position();
+                uint8_t buf[8];
+                int n = f.read(buf, 8);
+                int y = BODY_Y + 16 + r * 11;
+                d.setTextColor(T_DIM, T_BG);
+                d.setCursor(2, y);
+                d.printf("%04X:", (unsigned)pos);
+                d.setTextColor(T_ACCENT, T_BG);
+                d.setCursor(34, y);
+                for (int i = 0; i < n; i++) d.printf("%02X ", buf[i]);
+                d.setTextColor(T_FG, T_BG);
+                d.setCursor(180, y);
+                for (int i = 0; i < n; i++) {
+                    char c = (buf[i] >= 32 && buf[i] < 127) ? (char)buf[i] : '.';
+                    d.printf("%c", c);
+                }
+            }
+        }
+        ui_draw_footer(";/.=scroll  H=hex/txt  `=back");
+    };
+
+    render();
+    while (true) {
+        uint16_t k = input_poll();
+        if (k == PK_NONE) { delay(20); continue; }
+        if (k == PK_ESC) break;
+        if (k == ';' || k == PK_UP) {
+            if (line_offset > 0) { line_offset--; render(); }
+        } else if (k == '.' || k == PK_DOWN) {
+            line_offset++; render();
+        } else if (k == 'h' || k == 'H') {
+            hex_mode = !hex_mode;
+            line_offset = 0;
+            render();
+        }
+    }
+    f.close();
+}
+
 void feat_file_browser(void)
 {
     if (!sd_mount()) { ui_toast("SD mount fail", T_BAD, 1500); return; }
@@ -233,7 +326,7 @@ void feat_file_browser(void)
     };
 
     draw();
-    ui_draw_footer(";/.=move  ENTER=open  D=delete  `=up");
+    ui_draw_footer(";/.=move  ENTER=view/open  D=del  `=up");
     while (true) {
         uint16_t k = input_poll();
         if (k == PK_NONE) { delay(20); continue; }
@@ -253,6 +346,11 @@ void feat_file_browser(void)
                     strcat(path, e.name);
                     fb_list(path); cursor = 0; draw();
                 }
+            } else {
+                char full[192];
+                snprintf(full, sizeof(full), "%s/%s", path, e.name);
+                fb_view_file(full, e.name);
+                draw();
             }
         } else if ((k == 'd' || k == 'D') && s_fb_count > 0) {
             const fb_entry_t &e = s_fb[cursor];
