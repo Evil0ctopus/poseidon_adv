@@ -36,6 +36,15 @@ const char *radio_name(void);
  * everywhere instead of inlining the raw IDF calls. */
 void wifi_force_clean_sta(void);
 
+/* Fully deinit + destroy the WiFi driver and its netifs. Normally the
+ * driver stays resident-but-stopped after a WiFi feature exits (see
+ * teardown_current) to avoid deinit/init churn fragmenting the heap.
+ * That resident state can itself be the fragmentation source for a
+ * feature that needs a large contiguous block right after a prior WiFi
+ * session (e.g. wardrive's 24 KB AP table) — call this first in that
+ * case, then re-init via wifi_lean_sta_init(). No-op if never inited. */
+void wifi_release_driver(void);
+
 /* Idempotent raw-IDF lean WiFi init in STA mode. Bypasses Arduino's
  * WiFi.mode(WIFI_STA) which uses DEFAULT buffer counts that won't fit
  * in DMA-capable RAM after the M5GFX framebuffer takes its ~60 KB.

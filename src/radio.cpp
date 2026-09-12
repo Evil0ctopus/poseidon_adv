@@ -15,7 +15,7 @@
 
 static radio_domain_t s_active = RADIO_NONE;
 
-static void wifi_release_for_ble(void)
+void wifi_release_driver(void)
 {
     wifi_mode_t cur = WIFI_MODE_NULL;
     if (esp_wifi_get_mode(&cur) != ESP_OK) return;
@@ -196,7 +196,7 @@ bool radio_switch(radio_domain_t target)
      * makes a Wi-Fi -> BLE transition fail with ESP_ERR_NO_MEM. Release the
      * Wi-Fi driver only for this cross-domain transition. */
     if (target == RADIO_BLE && previous == RADIO_WIFI) {
-        wifi_release_for_ble();
+        wifi_release_driver();
     }
 
     switch (target) {

@@ -46,6 +46,18 @@ static void serial_cmd_task(void *)
                                   (unsigned long)idle,
                                   feat);
                 }
+                else if (buf[0] == 'T') {
+                    static const char *const names[] = {
+                        "loopTask", "ser_cmd", "ir_park", "sfx", "gps", "wdr_hop"
+                    };
+                    for (const char *name : names) {
+                        TaskHandle_t task = xTaskGetHandle(name);
+                        if (task) {
+                            Serial.printf("[TASK] %-8s spare=%u\n", name,
+                                          (unsigned)uxTaskGetStackHighWaterMark(task));
+                        }
+                    }
+                }
                 else if (buf[0] == 'R') {
                     Serial.println("[CMD] reset");
                     delay(50);
@@ -97,5 +109,5 @@ static void serial_cmd_task(void *)
 
 void serial_test_init(void)
 {
-    xTaskCreate(serial_cmd_task, "ser_cmd", 4096, nullptr, 1, nullptr);
+    xTaskCreate(serial_cmd_task, "ser_cmd", 3072, nullptr, 1, nullptr);
 }

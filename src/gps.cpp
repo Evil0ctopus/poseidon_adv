@@ -128,7 +128,7 @@ bool gps_ensure_running(void)
     if (!s_started) gps_begin();
     if (!s_gps_task) {
         s_gps_stop = false;  /* clear any prior cooperative-stop request */
-        xTaskCreate(gps_task_fn, "gps", 3072, nullptr, 2, &s_gps_task);
+        xTaskCreate(gps_task_fn, "gps", 2304, nullptr, 2, &s_gps_task);
     }
     return s_started;
 }

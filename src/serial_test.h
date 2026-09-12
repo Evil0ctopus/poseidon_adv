@@ -6,11 +6,12 @@
  * Wire format (newline-terminated ASCII):
  *   K<hex4>   inject keypress code into input_poll queue. e.g. K001B = ESC
  *   S         dump runtime state (heap, uptime, idle, current feat)
+ *   T         dump task stack high-water marks
  *   R         soft reset (ESP.restart)
  *   ?         banner with version
  *
  * Replies are prefixed with "[CMD]" or "[STATE]" so the host can grep
- * cleanly past the normal log noise. Cost: one task, 4 KB stack, polls
+ * cleanly past the normal log noise. Cost: one task, 3 KB stack, polls
  * Serial.available every 20 ms.
  */
 #pragma once

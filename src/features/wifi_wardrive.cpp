@@ -36,9 +36,9 @@ static portMUX_TYPE s_wdr_mux = portMUX_INITIALIZER_UNLOCKED;
  * seed themselves from what we've already catalogued in this session. */
 wdr_ap_t *g_wdr_aps = nullptr;
 
-    /* Allocate the AP buffer on first wardrive use. Kept resident afterward
+/* Allocate the AP buffer on first wardrive use. Kept resident afterward
  * because triton/pmkid read it later in the session; freeing on exit would
- * corrupt those. Sessions that never wardrive keep the 20 KB free. */
+ * corrupt those. Sessions that never wardrive keep the 8.5 KB free. */
 bool wdr_aps_ensure(void)
 {
     if (g_wdr_aps) return true;
@@ -546,8 +546,17 @@ void feat_wifi_wardrive(void)
 
     /* Leave BLE or another radio domain before allocating the persistent AP
      * table. BLE controller memory is otherwise still resident and can make
-     * this 20 KB allocation fail after visiting several screens. */
+     * this allocation fail after visiting several screens. */
     radio_switch(RADIO_WIFI);
+
+    /* radio_switch() is a no-op when WiFi was already the active domain
+     * (e.g. coming straight from WiFi Scan) — the driver is left resident
+     * per teardown_current()'s intentional stopped-but-inited policy, which
+     * fragments the heap and can shrink the largest free block below the
+     * AP table's requirement. First-time allocation needs the whole block
+     * contiguous, so fully release and let wifi_lean_sta_init() below
+     * bring the driver back up clean. */
+    if (!g_wdr_aps) wifi_release_driver();
 
     /* Reclaim display/radio caches while the heap is still clean, before WiFi
      * init grabs its buffers. The preflight checks the largest contiguous
@@ -599,14 +608,16 @@ void feat_wifi_wardrive(void)
     esp_wifi_set_channel(s_current_ch, WIFI_SECOND_CHAN_NONE);
 
     s_running = true;
-    xTaskCreate(hop_task, "wdr_hop", 3072, nullptr, 4, nullptr);
+    xTaskCreate(hop_task, "wdr_hop", 2048, nullptr, 4, nullptr);
 
     /* Bring up the C5 ESP-NOW link AFTER the hop task has its stack — ESP-NOW
      * init eats internal SRAM, and doing it first starved xTaskCreate(hop_task)
      * (silent fail → wardrive froze on channel 1). Idempotent; if a satellite
      * is present it feeds us 5 GHz APs. Note: c5_begin re-pins ch1 once, but
      * the hop task immediately resumes sweeping. */
-    c5_begin();
+    bool c5_discovery_active = c5_begin();
+    bool c5_detected = false;
+    uint32_t c5_discovery_deadline = millis() + 6500;
 
     ui_clear_body();
     ui_draw_footer("ESC=stop  A=view  F=flush  ?=help");
@@ -634,7 +645,16 @@ void feat_wifi_wardrive(void)
          * moved us off ch1, so the batch was never received. Fix: every ~6 s
          * open a short window where the hop task parks on ch1 (s_c5_hold) so the
          * scan command AND the streamed batch both land, then resume hopping. */
-        if (c5_any_online()) {
+        bool c5_online = c5_any_online();
+        if (c5_online) c5_detected = true;
+        if (c5_discovery_active && !c5_detected && now >= c5_discovery_deadline) {
+            /* A C5 broadcasts HELLO every 5 s. If a full interval plus margin
+             * passes without one, release ESP-NOW's heap for local capture. */
+            c5_stop();
+            c5_discovery_active = false;
+            heap_report("wardrive c5 absent");
+        }
+        if (c5_online) {
             if (!s_c5_hold && now - last_c5_scan > 6000) {
                 last_c5_scan   = now;
                 s_c5_hold      = true;                 /* hop task parks on ch1 */

@@ -87,14 +87,14 @@ void sfx_init(void)
     apply_volume();
 
     /* Player task + queue. 8 events is enough — sfx are short and the
-     * player drains fast. Stack 3 KB covers worst-case sfx_boot (deepest
+     * player drains fast. Stack 2.5 KB covers worst-case sfx_boot (deepest
      * call chain through sweep + chord, both stack-frame-only). Priority 1
      * so even idle UI tasks preempt it; we don't want SFX timing to
      * starve real work. */
     if (!s_sfx_q) {
         s_sfx_q = xQueueCreate(8, sizeof(uint8_t));
         if (s_sfx_q) {
-            xTaskCreate(sfx_player_task, "sfx", 3072, nullptr, 1, nullptr);
+            xTaskCreate(sfx_player_task, "sfx", 2560, nullptr, 1, nullptr);
         }
     }
     s_inited = true;
