@@ -1,0 +1,6 @@
+# Built from poseidon_adv commit 61c2e9fc0e67591d0b053ec88881d1a291c8046f
+# Launcher installs poseidon-launcher.bin into app1/ota_0 at 0x170000.
+3a6ea9c04d9109924a0602043bdaf68f458e571da366140a88bf731698de1d59  poseidon_adv.bin
+70225b02fbd89973a3243c5c3547bcf882fc2a5a4997aa6bb44dc7d170a04e5a  poseidon_adv_factory.bin
+70225b02fbd89973a3243c5c3547bcf882fc2a5a4997aa6bb44dc7d170a04e5a  poseidon-factory.bin
+e90f93ba3eb0f9501bfb59772e0a88ba37211e1be3590510e68ea9f364af990a  poseidon-launcher.bin
