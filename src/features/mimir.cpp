@@ -20,7 +20,7 @@
 
 /* ---- data structures (all fixed-size, no heap) ---- */
 
-#define MIMIR_MAX_APS 64
+#define MIMIR_MAX_APS 32
 
 struct APRow {
     char    bssid[18];

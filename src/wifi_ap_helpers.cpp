@@ -30,6 +30,16 @@ bool wifi_raw_ap_up(const char *ssid, uint8_t channel,
     delay(300);
     esp_netif_t *sta_if = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (sta_if) esp_netif_destroy_default_wifi(sta_if);
+    /* Same reasoning for a leftover AP netif — a prior raw-AP feature
+     * (Karma, Portal, Evil Twin, CIW, AP Signal Test) may not have torn
+     * its own AP netif down before this call, and the
+     * esp_netif_create_default_wifi_ap below asserts on a duplicate
+     * ifkey (hard crash + reboot) instead of failing softly. Found via
+     * full-menu sweep test 2026-09-12: chaining raw-AP features back
+     * to back crashed with "assert failed: esp_netif_create_default_
+     * wifi_ap ... duplicate key". */
+    esp_netif_t *stale_ap_if = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (stale_ap_if) esp_netif_destroy_default_wifi(stale_ap_if);
 
     /* POS-AUDIT-007 (revised after on-device repro 2026-06-06):
      * force-shutdown BT before mem_release. The original IDLE gate

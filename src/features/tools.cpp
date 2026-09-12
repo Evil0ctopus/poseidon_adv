@@ -6,7 +6,8 @@
  *   Screen test : RGB bars + color grid
  *   Stopwatch   : count up with start/stop/lap
  *   Dice        : 4d6 roller, coin flip, magic 8-ball
- *   Morse       : type text, blink + beep in morse
+ *   Morse       : type text -> blink + beep in morse, or listen through
+ *                 the mic and live-decode incoming morse to text
  *   MAC rand    : randomize the WiFi MAC (survives one session)
  *   Calc        : tiny RPN calculator
  */
@@ -231,7 +232,7 @@ void feat_tool_chance(void)
     }
 }
 
-/* ================= Morse code sender ================= */
+/* ================= Morse code sender + listener ================= */
 
 static const char *s_morse[] = {
     /* A-Z */
@@ -262,13 +263,170 @@ static void morse_send(const char *s)
     }
 }
 
-void feat_tool_morse(void)
+/* Reverse lookup: dot/dash symbol string -> character. Returns 0 if the
+ * symbol doesn't match any known letter/digit. */
+static char morse_decode_symbol(const char *sym)
+{
+    if (!sym[0]) return 0;
+    for (int i = 0; i < 26; ++i) if (!strcmp(sym, s_morse[i])) return (char)('A' + i);
+    for (int i = 0; i < 10; ++i) if (!strcmp(sym, s_morse[26 + i])) return (char)('0' + i);
+    return '?';
+}
+
+/* Listen through the mic, decode incoming on/off tone timing as Morse,
+ * and show the live symbol buffer + decoded text. Unit length (dot ms)
+ * is adaptive: it tracks the shortest recent "on" pulse so it keeps up
+ * with whatever speed the source is sending at, after an initial fixed
+ * guess. Dash/gap thresholds are derived from that unit (standard
+ * Morse timing: dash = 3 units, intra-char gap = 1, letter gap = 3,
+ * word gap = 7). */
+void feat_tool_morse_listen(void)
+{
+    m5::mic_config_t mcfg = M5Cardputer.Mic.config();
+    mcfg.sample_rate = 8000;
+    mcfg.over_sampling = 2;
+    mcfg.magnification = 24;
+    M5Cardputer.Mic.config(mcfg);
+    if (!M5Cardputer.Mic.begin()) {
+        ui_toast("mic init failed", T_BAD, 1500);
+        return;
+    }
+
+    ui_clear_body();
+    auto &d = M5Cardputer.Display;
+    d.setTextColor(T_ACCENT, T_BG);
+    d.setCursor(4, BODY_Y + 2); d.print("MORSE LISTEN");
+    d.drawFastHLine(4, BODY_Y + 12, 80, T_ACCENT);
+    ui_draw_footer("listening...  ESC=stop");
+
+    /* 20ms chunks at 8kHz = 160 samples. */
+    const int    CHUNK_N = 160;
+    static int16_t buf[CHUNK_N];
+
+    /* Brief noise-floor calibration: average RMS over ~300ms of silence. */
+    long noise_sum = 0;
+    int  noise_n = 0;
+    for (int i = 0; i < 15; ++i) {
+        if (!M5Cardputer.Mic.record(buf, CHUNK_N, mcfg.sample_rate)) { delay(20); continue; }
+        long sq = 0;
+        for (int j = 0; j < CHUNK_N; ++j) sq += (long)buf[j] * buf[j];
+        noise_sum += (long)sqrt((double)sq / CHUNK_N);
+        noise_n++;
+    }
+    long noise_floor = noise_n ? (noise_sum / noise_n) : 40;
+    long on_thresh   = noise_floor * 4 + 200;
+
+    uint32_t unit_ms   = 100;   /* adaptive dot length, seeded with a guess */
+    bool     tone_on   = false;
+    uint32_t edge_ms    = millis();
+    bool     gap_handled = true;   /* avoids double-counting the same silence gap */
+
+    char sym[8]  = {0}; int sym_n = 0;
+    char text[48] = {0}; int text_n = 0;
+
+    char shown_sym[8] = "";
+    char shown_text[48] = "";
+
+    while (true) {
+        uint16_t k = input_poll();
+        if (k == PK_ESC) break;
+        if (k == 'c' || k == 'C') { text_n = 0; text[0] = 0; sym_n = 0; sym[0] = 0; }
+
+        if (!M5Cardputer.Mic.record(buf, CHUNK_N, mcfg.sample_rate)) { delay(10); continue; }
+        long sq = 0;
+        for (int j = 0; j < CHUNK_N; ++j) sq += (long)buf[j] * buf[j];
+        long rms = (long)sqrt((double)sq / CHUNK_N);
+        bool now_on = rms > on_thresh;
+        uint32_t now = millis();
+
+        if (now_on && !tone_on) {
+            /* rising edge: the silence before it just ended */
+            uint32_t gap = now - edge_ms;
+            if (!gap_handled && sym_n > 0) {
+                if (gap > unit_ms * 5) {                 /* word gap */
+                    char c = morse_decode_symbol(sym);
+                    if (c && text_n < (int)sizeof(text) - 2) text[text_n++] = c;
+                    if (text_n < (int)sizeof(text) - 2) text[text_n++] = ' ';
+                    text[text_n] = 0;
+                    sym_n = 0; sym[0] = 0;
+                } else if (gap > unit_ms * 2) {           /* letter gap */
+                    char c = morse_decode_symbol(sym);
+                    if (c && text_n < (int)sizeof(text) - 1) text[text_n++] = c;
+                    text[text_n] = 0;
+                    sym_n = 0; sym[0] = 0;
+                }
+            }
+            tone_on = true;
+            edge_ms = now;
+            gap_handled = true;
+        } else if (!now_on && tone_on) {
+            /* falling edge: the tone before it just ended -> classify dot/dash */
+            uint32_t dur = now - edge_ms;
+            if (sym_n < (int)sizeof(sym) - 1) {
+                sym[sym_n++] = (dur > unit_ms * 2) ? '-' : '.';
+                sym[sym_n] = 0;
+            }
+            /* Track the shortest recent pulse as the running unit length so
+             * decode speed follows the sender instead of a fixed guess. */
+            if (dur < unit_ms * 2 && dur > 20) {
+                unit_ms = (unit_ms * 3 + dur) / 4;
+                if (unit_ms < 40) unit_ms = 40;
+            }
+            tone_on = false;
+            edge_ms = now;
+            gap_handled = false;
+        }
+
+        if (strcmp(sym, shown_sym) != 0 || strcmp(text, shown_text) != 0) {
+            strncpy(shown_sym, sym, sizeof(shown_sym) - 1);
+            strncpy(shown_text, text, sizeof(shown_text) - 1);
+            d.fillRect(0, BODY_Y + 20, SCR_W, 60, T_BG);
+            d.setTextColor(now_on ? T_GOOD : T_DIM, T_BG);
+            d.setCursor(4, BODY_Y + 22); d.printf("[%s]", now_on ? "TONE" : "----");
+            d.setTextColor(T_WARN, T_BG);
+            d.setTextSize(2);
+            d.setCursor(4, BODY_Y + 34); d.print(sym[0] ? sym : "_");
+            d.setTextSize(1);
+            d.setTextColor(T_FG, T_BG);
+            d.setCursor(4, BODY_Y + 58);
+            /* last ~30 chars so the newest decoded text stays on screen */
+            const char *tail = text_n > 30 ? text + (text_n - 30) : text;
+            d.print(tail);
+        }
+        delay(5);
+    }
+    M5Cardputer.Mic.end();
+    ui_toast("stopped", T_DIM, 400);
+}
+
+void feat_tool_morse_send(void)
 {
     char msg[64];
     if (!input_line("text:", msg, sizeof(msg))) return;
     if (!msg[0]) return;
     morse_send(msg);
     ui_toast("sent", T_GOOD, 500);
+}
+
+void feat_tool_morse(void)
+{
+    ui_clear_body();
+    auto &d = M5Cardputer.Display;
+    d.setTextColor(T_ACCENT, T_BG);
+    d.setCursor(4, BODY_Y + 2); d.print("MORSE");
+    d.drawFastHLine(4, BODY_Y + 12, 80, T_ACCENT);
+    d.setTextColor(T_FG, T_BG);
+    d.setCursor(4, BODY_Y + 26); d.print("S = send text as morse");
+    d.setCursor(4, BODY_Y + 40); d.print("L = listen + decode morse");
+    ui_draw_footer("S=send  L=listen  `=back");
+
+    while (true) {
+        uint16_t k = PK_NONE;
+        while (k == PK_NONE) { k = input_poll(); delay(20); }
+        if (k == PK_ESC) return;
+        if (k == 's' || k == 'S') { feat_tool_morse_send(); return; }
+        if (k == 'l' || k == 'L') { feat_tool_morse_listen(); return; }
+    }
 }
 
 /* ================= MAC randomizer ================= */

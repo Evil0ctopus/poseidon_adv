@@ -21,6 +21,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
+#include <NimBLEDevice.h>
 #include <SD.h>
 #include "../sd_helper.h"
 #include "../argus.h"
@@ -77,6 +78,31 @@ static volatile bool     s_gps_ever_locked = false;
 static volatile bool     s_juicy_pending = false; /* set in RX cb, consumed in UI loop */
 static volatile uint32_t s_cache_rollovers = 0;
 static volatile int      s_last_new_idx = -1;
+static volatile bool     s_force_flush = false;
+/* Experimental hybrid path is intentionally not menu-exposed until the
+ * pinned SDK's stale-netif lifecycle is fixed; keep its code isolated. */
+static bool              s_hybrid_enabled = false;
+static bool              s_snapshot_mode = false;
+static uint32_t          s_hybrid_ble_total = 0;
+#define HYBRID_BLE_INTERVAL_MS 30000UL
+#define HYBRID_BLE_SCAN_MS      5000UL
+#define HYBRID_BLE_MIN_BLOCK    60000UL
+#define HYBRID_BLE_SEEN_MAX     128
+static uint8_t s_hybrid_ble_seen[HYBRID_BLE_SEEN_MAX][6];
+static int     s_hybrid_ble_seen_n = 0;
+struct hybrid_ble_row_t {
+    uint8_t addr[6];
+    char name[33];
+    char stamp[16];
+    int8_t rssi;
+    double lat;
+    double lon;
+    float alt;
+};
+static hybrid_ble_row_t s_hybrid_ble_rows[32];
+static int s_hybrid_ble_row_n = 0;
+static uint8_t s_snapshot_wifi_seen[256][6];
+static int s_snapshot_wifi_seen_n = 0;
 
 static inline const char *surv_tag_str(surv_class_t cls, const char *ssid)
 {
@@ -119,8 +145,11 @@ static bool wdr_open_csv(void)
     }
     if (SD.exists(s_csv_path)) {
         char base[64];
-        strncpy(base, s_csv_path, sizeof(base) - 1);
-        base[sizeof(base) - 1] = '\0';
+        /* Leave room for "-99.csv\0" (8 bytes) so the suffix loop below
+         * can never truncate/overflow s_csv_path regardless of how long
+         * the timestamp-derived base name is. */
+        strncpy(base, s_csv_path, sizeof(base) - 8);
+        base[sizeof(base) - 8] = '\0';
         char *ext = strrchr(base, '.');
         if (ext) *ext = '\0';
         for (unsigned suffix = 2; suffix < 100; ++suffix) {
@@ -243,18 +272,28 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     if (idx < 0) {
         is_new_ap = true;
         if (s_ap_count >= WARDRIVE_MAX_APS) {
-            /* The CSV is the durable capture. Reuse the oldest entry only
-             * after its pending row has been flushed, so a full cache does
-             * not silently stop discovering networks. */
+            /* The CSV is the durable capture. Reuse the oldest entry that
+             * has no *valid* pending row: a dirty entry with no GPS fix
+             * never gets written anyway (flush_dirty_rows drops rows with
+             * !has_gps to avoid null-island), so it is safe — and
+             * necessary — to evict those too. Without this, a full cache
+             * indoors / before first GPS fix made every entry "dirty"
+             * forever and no new AP could ever be added again: the AP
+             * counter froze at WARDRIVE_MAX_APS and wardrive looked hung. */
             uint32_t oldest = UINT32_MAX;
             int victim = -1;
             for (int i = 0; i < s_ap_count; ++i) {
-                if (!s_aps[i].dirty && s_aps[i].last_seen < oldest) {
+                if ((!s_aps[i].dirty || !s_aps[i].has_gps) && s_aps[i].last_seen < oldest) {
                     oldest = s_aps[i].last_seen;
                     victim = i;
                 }
             }
             if (victim < 0) {
+                /* Every entry is dirty with a real GPS-tagged row pending —
+                 * ask the UI loop to flush ASAP instead of waiting up to
+                 * 3s, so the table unblocks on the next tick rather than
+                 * stalling captures in dense areas. */
+                s_force_flush = true;
                 portEXIT_CRITICAL_ISR(&s_wdr_mux);
                 return;
             }
@@ -396,12 +435,13 @@ static void merge_c5_5g(void)
                 uint32_t oldest = UINT32_MAX;
                 int victim = -1;
                 for (int j = 0; j < s_ap_count; ++j) {
-                    if (!s_aps[j].dirty && s_aps[j].last_seen < oldest) {
+                    if ((!s_aps[j].dirty || !s_aps[j].has_gps) && s_aps[j].last_seen < oldest) {
                         oldest = s_aps[j].last_seen;
                         victim = j;
                     }
                 }
                 if (victim < 0) {
+                    s_force_flush = true;
                     portEXIT_CRITICAL(&s_wdr_mux);
                     continue;
                 }
@@ -464,8 +504,12 @@ static void draw_plain_view(bool &dirty)
         dirty = false;
     }
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(4, BODY_Y + 18); d.printf("APs:%-5d 5G:%-3d Surv:%-3d", s_ap_count, s_5g_count, s_surv_count);
-    d.setCursor(4, BODY_Y + 30); d.printf("Beacons:%-7lu new:%-5d", (unsigned long)s_beacons, s_new_this_run);
+    /* Cache occupancy hidden here on purpose — it caps at WARDRIVE_MAX_APS
+     * by design once the rolling table fills, which read as a false stall.
+     * "wifi" (uncapped, unique networks this session) is the number to
+     * watch; see wdr_milestone_crossed / s_new_this_run. */
+    d.setCursor(4, BODY_Y + 18); d.printf("5G:%-3d Surv:%-3d", s_5g_count, s_surv_count);
+    d.setCursor(4, BODY_Y + 30); d.printf("Beacons:%-7lu wifi:%-5d", (unsigned long)s_beacons, s_new_this_run);
     d.setCursor(4, BODY_Y + 42); d.printf("Channel: %-2u  C5:%-3s",
                                           s_current_ch, c5_any_online() ? "on" : "off");
     const gps_fix_t &g = gps_get();
@@ -500,9 +544,11 @@ static void draw_argus_view(argus_mood_t base, bool &dirty)
 
     const int rx = 110;            /* right stat column */
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(rx, BODY_Y + 2);  d.printf("APs %-5d", s_ap_count);
-    d.setCursor(rx, BODY_Y + 14); d.printf("new %-5d", s_new_this_run);
-    d.setCursor(rx, BODY_Y + 26); d.printf("bcn %-6lu", (unsigned long)s_beacons);
+    /* "wifi" is the uncapped running total of unique networks found this
+     * session -- the number to watch. Cache occupancy (caps at
+     * WARDRIVE_MAX_APS by design) is intentionally not shown here. */
+    d.setCursor(rx, BODY_Y + 2);  d.printf("wifi %-5d", s_new_this_run);
+    d.setCursor(rx, BODY_Y + 14); d.printf("bcn %-6lu", (unsigned long)s_beacons);
     /* ch + 5G count (magenta when a C5 satellite is feeding us) + C5 pip */
     bool c5on = c5_any_online();
     d.setCursor(rx, BODY_Y + 38);
@@ -532,6 +578,258 @@ static void draw_argus_view(argus_mood_t base, bool &dirty)
         if (g.valid) d.printf("%-14s", s_csv_path + 10);  /* skip "/poseidon/" prefix */
         else         d.printf("holding rows ");
     }
+}
+
+static bool hybrid_restore_wifi(void)
+{
+    radio_switch(RADIO_WIFI);
+    if (!wifi_lean_sta_init()) return false;
+    static const wifi_promiscuous_filter_t all_filter = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_ALL
+    };
+    esp_wifi_set_promiscuous_filter(&all_filter);
+    esp_wifi_set_promiscuous_rx_cb(promisc_cb);
+    esp_wifi_set_channel(s_current_ch, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(true);
+    if (s_snapshot_mode) return true;
+    s_running = true;
+    if (xTaskCreate(hop_task, "wdr_hop", 2048, nullptr, 4, nullptr) != pdPASS) {
+        s_running = false;
+        esp_wifi_set_promiscuous(false);
+        return false;
+    }
+    return true;
+}
+
+static bool hybrid_restore_storage(void)
+{
+    if (!sd_remount()) return false;
+    if (s_snapshot_mode)
+        return (bool)(s_csv = SD.open(s_csv_path, FILE_APPEND));
+    if (!wdr_aps_ensure()) return false;
+    return wdr_open_csv();
+}
+
+static bool hybrid_restore_all(void)
+{
+    return hybrid_restore_storage() && hybrid_restore_wifi();
+}
+
+static bool hybrid_ble_seen(const uint8_t *addr)
+{
+    for (int i = 0; i < s_hybrid_ble_seen_n; ++i)
+        if (memcmp(s_hybrid_ble_seen[i], addr, 6) == 0) return true;
+    return false;
+}
+
+static bool run_hybrid_ble_burst(void)
+{
+    Serial.printf("[wdr-hybrid] burst begin free=%u largest=%u\n",
+                  (unsigned)heap_free_internal(),
+                  (unsigned)heap_largest_internal());
+    if (c5_any_online()) {
+        Serial.println("[wdr-hybrid] skipped: C5 active");
+        ui_toast("BLE burst skipped: C5 active", T_WARN, 1200);
+        return false;
+    }
+
+    s_running = false;
+    uint32_t deadline = millis() + 800;
+    while (s_hop_alive && millis() < deadline) delay(5);
+    esp_wifi_set_promiscuous(false);
+    flush_dirty_rows();
+    if (s_csv) s_csv.flush();
+
+    /* The AP cache and SD bus are Wardrive-only state. The durable CSV is
+     * already flushed, so evacuate both before asking BLE for a large block. */
+    if (s_csv) s_csv.close();
+    if (g_wdr_aps) {
+        heap_caps_free(g_wdr_aps);
+        g_wdr_aps = nullptr;
+        s_ap_count = 0;
+    }
+    SD.end();
+    sd_get_spi().end();
+
+    /* Release the WiFi driver and reclaim registered display caches before
+     * asking the BT controller for its large contiguous startup block. */
+    heap_reclaim_all();
+    wifi_release_driver();
+    Serial.printf("[wdr-hybrid] after WiFi release free=%u largest=%u\n",
+                  (unsigned)heap_free_internal(),
+                  (unsigned)heap_largest_internal());
+    if (heap_largest_internal() < HYBRID_BLE_MIN_BLOCK) {
+        Serial.printf("[wdr-hybrid] skipped: need=%lu largest=%u\n",
+                      (unsigned long)HYBRID_BLE_MIN_BLOCK,
+                      (unsigned)heap_largest_internal());
+        ui_toast("BLE burst skipped: low DMA RAM", T_WARN, 1400);
+        return hybrid_restore_all();
+    }
+    if (!radio_switch(RADIO_BLE)) {
+        Serial.println("[wdr-hybrid] skipped: radio switch failed");
+        ui_toast("BLE burst unavailable", T_WARN, 1400);
+        return hybrid_restore_all();
+    }
+
+    NimBLEScan *scan = NimBLEDevice::getScan();
+    if (!scan) {
+        radio_switch(RADIO_WIFI);
+        hybrid_restore_all();
+        return false;
+    }
+    scan->setInterval(97);
+    scan->setWindow(67);
+    scan->setDuplicateFilter(false);
+    scan->setMaxResults(64);
+    scan->setActiveScan(true);
+    Serial.printf("[wdr-hybrid] scan start free=%u largest=%u\n",
+                  (unsigned)heap_free_internal(),
+                  (unsigned)heap_largest_internal());
+    scan->start(HYBRID_BLE_SCAN_MS, false);
+    while (scan->isScanning()) {
+        gps_poll();
+        delay(20);
+    }
+
+    NimBLEScanResults results = scan->getResults();
+    s_hybrid_ble_row_n = 0;
+    for (int i = 0; i < (int)results.getCount(); ++i) {
+        const NimBLEAdvertisedDevice *device = results.getDevice(i);
+        if (!device) continue;
+        NimBLEAddress address = device->getAddress();
+        const uint8_t *raw = address.getBase()->val;
+        if (hybrid_ble_seen(raw)) continue;
+
+        gps_fix_t g;
+        char stamp[16];
+        if (!gps_snapshot(&g) || !g.valid) continue;
+        format_wigle_time(g, stamp);
+        if (!stamp[0]) continue;
+
+        if (s_hybrid_ble_row_n >= (int)(sizeof(s_hybrid_ble_rows) / sizeof(s_hybrid_ble_rows[0])))
+            continue;
+        hybrid_ble_row_t &row = s_hybrid_ble_rows[s_hybrid_ble_row_n++];
+        memcpy(row.addr, raw, 6);
+        strncpy(row.name, device->getName().c_str(), sizeof(row.name) - 1);
+        row.name[sizeof(row.name) - 1] = '\0';
+        strncpy(row.stamp, stamp, sizeof(row.stamp) - 1);
+        row.stamp[sizeof(row.stamp) - 1] = '\0';
+        row.rssi = device->getRSSI();
+        row.lat = g.lat_deg; row.lon = g.lon_deg; row.alt = g.alt_m;
+    }
+    scan->clearResults();
+    radio_switch(RADIO_WIFI);
+    if (!hybrid_restore_storage()) return false;
+    int logged = 0;
+    for (int i = 0; i < s_hybrid_ble_row_n; ++i) {
+        hybrid_ble_row_t &row = s_hybrid_ble_rows[i];
+        if (hybrid_ble_seen(row.addr)) continue;
+        char escaped_name[70];
+        csv_escape(row.name, escaped_name, sizeof(escaped_name));
+        s_csv.printf("%02X:%02X:%02X:%02X:%02X:%02X,%s,[BLE],%s,0,%d,%.6f,%.6f,%.1f,5,BLE\n",
+                     row.addr[0], row.addr[1], row.addr[2], row.addr[3],
+                     row.addr[4], row.addr[5], escaped_name, row.stamp,
+                     row.rssi, row.lat, row.lon, row.alt);
+        if (s_hybrid_ble_seen_n < HYBRID_BLE_SEEN_MAX)
+            memcpy(s_hybrid_ble_seen[s_hybrid_ble_seen_n++], row.addr, 6);
+        s_hybrid_ble_total++;
+        logged++;
+    }
+    s_csv.flush();
+    bool restored = hybrid_restore_wifi();
+    Serial.printf("[wdr-hybrid] burst end logged=%d restored=%d free=%u largest=%u\n",
+                  logged, (int)restored, (unsigned)heap_free_internal(),
+                  (unsigned)heap_largest_internal());
+    if (logged > 0) {
+        char msg[32];
+        snprintf(msg, sizeof(msg), "BLE +%d", logged);
+        ui_toast(msg, T_GOOD, 900);
+    }
+    return restored;
+}
+
+static bool snapshot_wifi_seen(const uint8_t *addr)
+{
+    for (int i = 0; i < s_snapshot_wifi_seen_n; ++i)
+        if (memcmp(s_snapshot_wifi_seen[i], addr, 6) == 0) return true;
+    return false;
+}
+
+static void snapshot_log_wifi(void)
+{
+    int count = WiFi.scanNetworks(false, true);
+    gps_fix_t g;
+    char stamp[16];
+    bool have_gps = gps_snapshot(&g) && g.valid;
+    if (have_gps) format_wigle_time(g, stamp);
+    for (int i = 0; i < count; ++i) {
+        const uint8_t *raw = WiFi.BSSID(i);
+        if (!raw || snapshot_wifi_seen(raw) || !have_gps || !stamp[0]) continue;
+        char ssid[33];
+        strncpy(ssid, WiFi.SSID(i).c_str(), sizeof(ssid) - 1);
+        ssid[sizeof(ssid) - 1] = '\0';
+        char escaped[70];
+        csv_escape(ssid, escaped, sizeof(escaped));
+        s_csv.printf("%02X:%02X:%02X:%02X:%02X:%02X,%s,%s,%s,%d,%d,%.6f,%.6f,%.1f,5,WIFI\n",
+                     raw[0], raw[1], raw[2], raw[3], raw[4], raw[5],
+                     escaped, auth_to_wigle(WiFi.encryptionType(i)), stamp,
+                     WiFi.channel(i), WiFi.RSSI(i), g.lat_deg, g.lon_deg,
+                     g.alt_m);
+        if (s_snapshot_wifi_seen_n < (int)(sizeof(s_snapshot_wifi_seen) / sizeof(s_snapshot_wifi_seen[0])))
+            memcpy(s_snapshot_wifi_seen[s_snapshot_wifi_seen_n++], raw, 6);
+    }
+    WiFi.scanDelete();
+    if (s_csv) s_csv.flush();
+}
+
+static void feat_wifi_wardrive_snapshot(void)
+{
+    s_hybrid_enabled = true;
+    s_snapshot_mode = true;
+    s_hybrid_ble_total = 0;
+    s_hybrid_ble_seen_n = 0;
+    s_snapshot_wifi_seen_n = 0;
+    memset(s_hybrid_ble_seen, 0, sizeof(s_hybrid_ble_seen));
+    memset(s_snapshot_wifi_seen, 0, sizeof(s_snapshot_wifi_seen));
+
+    if (!sd_mount() && !sd_remount()) {
+        ui_toast("SD mount failed - reseat card?", T_BAD, 1800);
+        s_snapshot_mode = false;
+        s_hybrid_enabled = false;
+        return;
+    }
+    radio_switch(RADIO_WIFI);
+    wifi_release_driver();
+    heap_reclaim_all();
+    if (!wifi_lean_sta_init() || !gps_ensure_running() || !wdr_open_csv()) {
+        ui_toast("snapshot setup failed", T_BAD, 1600);
+        s_snapshot_mode = false;
+        s_hybrid_enabled = false;
+        return;
+    }
+
+    ui_clear_body();
+    ui_draw_footer("ESC=stop  WiFi snapshot -> BLE  ?=help");
+    bool failed = false;
+    while (true) {
+        gps_poll();
+        snapshot_log_wifi();
+        if (!run_hybrid_ble_burst()) {
+            failed = true;
+            break;
+        }
+        ui_draw_status("hybrid", "WiFi+BLE");
+        uint16_t k = input_poll();
+        if (k == PK_ESC) break;
+        if (k == '?') ui_show_current_help();
+    }
+    s_running = false;
+    if (s_csv) s_csv.close();
+    esp_wifi_set_promiscuous(false);
+    radio_switch(RADIO_NONE);
+    if (failed) ui_toast("hybrid stopped safely", T_WARN, 1400);
+    s_snapshot_mode = false;
+    s_hybrid_enabled = false;
 }
 
 void feat_wifi_wardrive(void)
@@ -594,6 +892,12 @@ void feat_wifi_wardrive(void)
     s_last_surv_cls = SURV_UNKNOWN;
     s_last_surv_ms = 0;
     s_last_new_idx = -1;
+    s_force_flush = false;
+    if (s_hybrid_enabled) {
+        s_hybrid_ble_total = 0;
+        s_hybrid_ble_seen_n = 0;
+        memset(s_hybrid_ble_seen, 0, sizeof(s_hybrid_ble_seen));
+    }
     s_entry_ms = millis();
 
     /* Explicit MASK_ALL filter. On IDF 5.5, NOT setting a filter (or
@@ -620,13 +924,16 @@ void feat_wifi_wardrive(void)
     uint32_t c5_discovery_deadline = millis() + 6500;
 
     ui_clear_body();
-    ui_draw_footer("ESC=stop  A=view  F=flush  ?=help");
+    ui_draw_footer(s_hybrid_enabled
+        ? "ESC=stop  A=view  F=flush  BLE=5s/30s  ?=help"
+        : "ESC=stop  A=view  F=flush  ?=help");
 
     uint32_t last_redraw = 0;
     uint32_t last_flush  = 0;
     uint32_t last_c5_scan = 0;
     uint32_t last_c5_merge = 0;
     uint32_t c5_window_end = 0;
+    uint32_t next_hybrid_ble = millis() + HYBRID_BLE_INTERVAL_MS;
     bool dirty = true;
     bool     prev_gps_valid = false;
     int      prev_new       = 0;
@@ -638,6 +945,14 @@ void feat_wifi_wardrive(void)
     while (true) {
         gps_poll();
         uint32_t now = millis();
+
+        if (s_hybrid_enabled && now >= next_hybrid_ble) {
+            next_hybrid_ble = now + HYBRID_BLE_INTERVAL_MS;
+            if (!run_hybrid_ble_burst() && !s_running) break;
+            dirty = true;
+            last_redraw = 0;
+            continue;
+        }
 
         /* C5 5 GHz augmentation — hop-SYNCHRONOUS. The old "opportunistic over
          * the hop" approach logged zero 5 GHz APs: the C5 ships its result
@@ -674,8 +989,9 @@ void feat_wifi_wardrive(void)
             }
         }
 
-        if (now - last_flush > 3000) {
+        if (now - last_flush > 3000 || s_force_flush) {
             last_flush = now;
+            s_force_flush = false;
             flush_dirty_rows();
         }
         /* Matrix view animates fast; the partial-redraw views stay at 250ms. */
@@ -828,4 +1144,9 @@ void feat_wifi_wardrive(void)
     flush_dirty_rows();
     if (s_csv) { s_csv.close(); }
     delay(150);
+}
+
+void feat_wifi_wardrive_hybrid(void)
+{
+    feat_wifi_wardrive_snapshot();
 }

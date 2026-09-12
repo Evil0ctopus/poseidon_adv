@@ -163,6 +163,31 @@ static volatile uint32_t s_ble_window_start_ms = 0;
 static File s_log;
 static char s_log_path[64] = {0};
 
+/* Uncapped running totals of DISTINCT devices seen this session — the
+ * 1s-window counters above are for rate-based anomaly detection and reset
+ * every second; these are what a user watches to confirm the monitor is
+ * still finding new things. WiFi only counts WiFi, BLE only counts BLE. */
+static volatile uint32_t s_wifi_distinct_total = 0;
+static volatile uint32_t s_ble_distinct_total   = 0;
+
+/* GPS-tagged WiGLE CSV export for new WiFi APs — same schema as
+ * wifi_wardrive.cpp so the output drops into the same WiGLE upload flow.
+ * Rows are queued from the ISR (no SD I/O there) and written from the
+ * main loop, GPS-tagged if a fix is available at drain time. */
+struct dm_wigle_row_t {
+    uint8_t bssid[6];
+    char    ssid[33];
+    uint8_t channel;
+    int8_t  rssi;
+    bool    open;
+};
+#define DM_WIGLE_Q_N 16
+static volatile dm_wigle_row_t s_wigle_q[DM_WIGLE_Q_N];
+static volatile uint8_t s_wigle_q_head = 0;
+static volatile uint8_t s_wigle_q_tail = 0;
+static File s_wigle_csv;
+static char s_wigle_csv_path[64] = {0};
+
 /* Per-class hit totals for the dashboard */
 static volatile uint32_t s_alert_count[DM_CLS__MAX] = {0};
 
@@ -213,6 +238,7 @@ static bool bssid_was_seen(const uint8_t bssid[6])
     }
     memcpy((void *)s_bssid_seen[oldest].bssid, bssid, 6);
     s_bssid_seen[oldest].last_ms = millis();
+    s_wifi_distinct_total++;
     return false;
 }
 
@@ -280,6 +306,7 @@ static bool ble_addr_was_seen(const uint8_t addr[6])
     }
     memcpy((void *)s_ble_addrs[oldest].addr, addr, 6);
     s_ble_addrs[oldest].last_ms = millis();
+    s_ble_distinct_total++;
     return false;
 }
 
@@ -442,6 +469,28 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         s_beacons_total++;
         if (!bssid_was_seen(bssid)) {
             s_new_bssids_now++;
+            /* Queue a GPS-taggable WiGLE row for this new AP -- drained
+             * and written from the main loop (no SD I/O allowed in ISR). */
+            uint8_t qhead = s_wigle_q_head;
+            uint8_t qnext = (uint8_t)((qhead + 1) % DM_WIGLE_Q_N);
+            if (qnext != s_wigle_q_tail) {
+                char ssid[33] = {0};
+                const uint8_t *tags = p + 36;
+                int tag_len = len - 36 - 4;
+                if (tag_len > 1 && tags[0] == 0 && tags[1] <= 32 && tags[1] <= (tag_len - 2)) {
+                    memcpy(ssid, tags + 2, tags[1]);
+                    ssid[tags[1]] = '\0';
+                }
+                uint16_t cap = (len > 35) ? (uint16_t)(p[34] | (p[35] << 8)) : 0;
+                memcpy((void *)s_wigle_q[qhead].bssid, bssid, 6);
+                size_t sl = strnlen(ssid, 32);
+                memcpy((void *)s_wigle_q[qhead].ssid, ssid, sl);
+                ((char *)s_wigle_q[qhead].ssid)[sl] = '\0';
+                s_wigle_q[qhead].channel = s_current_ch;
+                s_wigle_q[qhead].rssi    = pkt->rx_ctrl.rssi;
+                s_wigle_q[qhead].open    = !(cap & (1 << 4));
+                s_wigle_q_head = qnext;
+            }
         }
         /* Mark beacon-seen for the Karma tracker. */
         for (int i = 0; i < DM_KARMA_N; i++) {
@@ -542,6 +591,49 @@ static bool open_log(void)
              SD_DEFMON_DIR "/defmon-%lu.jsonl", (unsigned long)ts);
     s_log = SD.open(s_log_path, FILE_WRITE);
     return s_log ? true : false;
+}
+
+/* GPS-tagged WiGLE v1.6 CSV for every new WiFi AP seen this session --
+ * same header/columns as wifi_wardrive.cpp so it drops into the same
+ * WiGLE upload flow. Best-effort: failing to open this doesn't block
+ * the monitor, it just runs without the export. */
+static bool open_wigle_csv(void)
+{
+    if (!sd_ensure_layout()) return false;
+    uint32_t ts = millis() / 1000;
+    snprintf(s_wigle_csv_path, sizeof(s_wigle_csv_path),
+             SD_DEFMON_DIR "/defmon-wigle-%lu.csv", (unsigned long)ts);
+    s_wigle_csv = SD.open(s_wigle_csv_path, FILE_WRITE);
+    if (!s_wigle_csv) return false;
+    s_wigle_csv.println("WigleWifi-1.6,appRelease=POSEIDON," POSEIDON_VERSION ",model=M5Cardputer,release=1,device=POSEIDON,display=ST7789,board=ESP32S3,brand=M5Stack");
+    s_wigle_csv.println("MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type");
+    s_wigle_csv.flush();
+    return true;
+}
+
+/* Drain queued new-AP rows and write them GPS-tagged. Rows found before
+ * a GPS fix ever lands are dropped (same null-island policy as wardrive)
+ * rather than writing lat=0,lon=0 placeholders that corrupt aggregate maps. */
+static void drain_wigle_rows(void)
+{
+    if (!s_wigle_csv) { s_wigle_q_tail = s_wigle_q_head; return; }
+    gps_fix_t g;
+    bool have_gps = gps_snapshot(&g) && g.valid;
+    while (s_wigle_q_tail != s_wigle_q_head) {
+        portENTER_CRITICAL(&s_mux);
+        uint8_t tail = s_wigle_q_tail;
+        dm_wigle_row_t row;
+        memcpy(&row, (const void *)&s_wigle_q[tail], sizeof(row));
+        s_wigle_q_tail = (uint8_t)((tail + 1) % DM_WIGLE_Q_N);
+        portEXIT_CRITICAL(&s_mux);
+        if (!have_gps) continue;   /* drop -- no position to tag it with yet */
+        s_wigle_csv.printf("%02X:%02X:%02X:%02X:%02X:%02X,%s,%s,,%u,%d,%.6f,%.6f,%.1f,5,WIFI\n",
+                            row.bssid[0], row.bssid[1], row.bssid[2],
+                            row.bssid[3], row.bssid[4], row.bssid[5],
+                            row.ssid, row.open ? "[ESS]" : "[WPA2-PSK-CCMP][ESS]",
+                            row.channel, row.rssi, g.lat_deg, g.lon_deg, g.alt_m);
+    }
+    s_wigle_csv.flush();
 }
 
 static void log_alert_row(const dm_alert_t &a)
@@ -685,6 +777,8 @@ void feat_defensive_monitor(void)
         ui_toast("cant open log", T_BAD, 1500);
         return;
     }
+    open_wigle_csv();   /* best-effort -- monitor still runs without it */
+    if (gps_user_enabled()) gps_ensure_running();
 
     /* Reset state */
     s_total = 0;
@@ -693,6 +787,9 @@ void feat_defensive_monitor(void)
     s_window_start_ms = millis();
     s_ble_total = s_ble_new_now = s_ble_new_last_window = 0;
     s_ble_window_start_ms = millis();
+    s_wifi_distinct_total = 0;
+    s_ble_distinct_total  = 0;
+    s_wigle_q_head = s_wigle_q_tail = 0;
     s_current_ch = 1;
     s_have_painted_alert = false;
     memset((void *)s_alert_count,   0, sizeof(s_alert_count));
@@ -738,6 +835,7 @@ void feat_defensive_monitor(void)
         if (s_phase == DM_PHASE_WIFI) window_tick();
         else                          ble_window_tick();
         drain_alerts();
+        drain_wigle_rows();
 
         now = millis();
         if (now - last_redraw > 250) {
@@ -753,9 +851,11 @@ void feat_defensive_monitor(void)
             }
             d.setTextColor(T_DIM, T_BG);
             d.setCursor(4, BODY_Y + 18);
-            d.printf("phase:%-4s pkt w=%lu b=%lu",
+            d.printf("ph:%-4s wifi:%-5lu ble:%-5lu g%c",
                      s_phase == DM_PHASE_WIFI ? "WIFI" : "BLE",
-                     (unsigned long)s_total, (unsigned long)s_ble_total);
+                     (unsigned long)s_wifi_distinct_total,
+                     (unsigned long)s_ble_distinct_total,
+                     gps_get().valid ? '*' : '.');
 
             /* Row 1: WiFi anomaly counters */
             d.setTextColor(T_BAD,    T_BG); d.setCursor(4,   BODY_Y + 30);
@@ -820,6 +920,8 @@ void feat_defensive_monitor(void)
         NimBLEDevice::getScan()->stop();
     }
     if (NimBLEDevice::isInitialized()) NimBLEDevice::deinit(true);
+    drain_wigle_rows();
     if (s_log) s_log.close();
+    if (s_wigle_csv) s_wigle_csv.close();
     delay(150);
 }

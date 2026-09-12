@@ -31,7 +31,12 @@
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
 
-#define UG_MAX 64
+/* 32, not 64 -- ug_scan() already bounds its output to this cap (never
+ * overflows), so this only means a very dense AP environment (>32
+ * visible networks) truncates to the strongest 32 in each scan rather
+ * than all of them. Halves this feature's static RAM (~5.3KB) for a
+ * one-shot delta-detection tool where that's an acceptable trade. */
+#define UG_MAX 32
 
 struct ug_ap_t {
     uint8_t bssid[6];

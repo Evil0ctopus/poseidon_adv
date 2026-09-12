@@ -380,6 +380,12 @@ void feat_wifi_ciw(void)
     esp_log_level_set("wifi_init", ESP_LOG_INFO);
     esp_netif_init();
     esp_event_loop_create_default();
+    /* Destroy any leftover AP netif from a prior raw-AP feature before
+     * creating ours — this call previously had no guard at all and was
+     * the most likely trigger of the duplicate-key assert crash found
+     * during the full-menu sweep test (2026-09-12). */
+    esp_netif_t *old_ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (old_ap) esp_netif_destroy_default_wifi(old_ap);
     esp_netif_create_default_wifi_ap();
 
     wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();

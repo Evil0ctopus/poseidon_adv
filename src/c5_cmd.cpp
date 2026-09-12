@@ -17,9 +17,9 @@
 #include <string.h>
 
 #define MAX_PEERS 4
-#define MAX_APS   64
-#define MAX_ZBS   32
-#define MAX_PMKIDS 16
+#define MAX_APS   32
+#define MAX_ZBS   16
+#define MAX_PMKIDS 8
 
 /* Spin-lock shared between the ESP-NOW recv callback (runs in the WiFi
  * task) and the UI thread reading peer/result arrays. Without this,
@@ -38,33 +38,33 @@ struct c5_peer_t {
 static c5_peer_t s_peers[MAX_PEERS];
 static volatile int s_peer_n = 0;
 
-static c5_ap_t  s_aps[MAX_APS];
+static c5_ap_t *s_aps = nullptr;
 static volatile int s_ap_n = 0;
 
-static c5_zb_t  s_zbs[MAX_ZBS];
+static c5_zb_t *s_zbs = nullptr;
 static volatile int s_zb_n = 0;
 
-static c5_pmkid_t s_pmkids[MAX_PMKIDS];
+static c5_pmkid_t *s_pmkids = nullptr;
 static volatile int s_pmkid_n = 0;
 
 /* Handshake buffer — each entry is a full M1+M2 tuple ready to be
  * converted into a hashcat 22000 line. Sized small on purpose; the
  * usual flow is: capture → hashcat-convert to SD → clear. */
-#define MAX_HSS 8
-static c5_hs_t s_hss[MAX_HSS];
+#define MAX_HSS 4
+static c5_hs_t *s_hss = nullptr;
 static volatile int s_hs_n = 0;
 
 /* v3 result buffers. Kept small/bounded like the others; the UI drains
  * these via the c5_stas/c5_probes/c5_deauth_hits accessors. SPECTRUM is
  * a single latest-batch snapshot, not a ring. */
-#define MAX_STAS    32
-#define MAX_PROBES  32
-#define MAX_DHITS   32
-static c5_sta_t s_stas[MAX_STAS];
+#define MAX_STAS    16
+#define MAX_PROBES  16
+#define MAX_DHITS   16
+static c5_sta_t *s_stas = nullptr;
 static volatile int s_sta_n = 0;
-static c5_probe_t s_probes[MAX_PROBES];
+static c5_probe_t *s_probes = nullptr;
 static volatile int s_probe_n = 0;
-static c5_deauth_hit_t s_dhits[MAX_DHITS];
+static c5_deauth_hit_t *s_dhits = nullptr;
 static volatile int s_dhit_n = 0;
 static c5_spectrum_t s_spectrum = {};
 static volatile bool s_spectrum_valid = false;
@@ -372,7 +372,33 @@ bool c5_begin(void)
     esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
 
     if (s_started) return true;
-    if (esp_now_init() != ESP_OK) return false;
+    s_aps = (c5_ap_t *)malloc(sizeof(c5_ap_t) * MAX_APS);
+    s_zbs = (c5_zb_t *)malloc(sizeof(c5_zb_t) * MAX_ZBS);
+    s_pmkids = (c5_pmkid_t *)malloc(sizeof(c5_pmkid_t) * MAX_PMKIDS);
+    s_hss = (c5_hs_t *)malloc(sizeof(c5_hs_t) * MAX_HSS);
+    s_stas = (c5_sta_t *)malloc(sizeof(c5_sta_t) * MAX_STAS);
+    s_probes = (c5_probe_t *)malloc(sizeof(c5_probe_t) * MAX_PROBES);
+    s_dhits = (c5_deauth_hit_t *)malloc(sizeof(c5_deauth_hit_t) * MAX_DHITS);
+    if (!s_aps || !s_zbs || !s_pmkids || !s_hss || !s_stas || !s_probes || !s_dhits) {
+        free(s_aps);    s_aps = nullptr;
+        free(s_zbs);    s_zbs = nullptr;
+        free(s_pmkids); s_pmkids = nullptr;
+        free(s_hss);    s_hss = nullptr;
+        free(s_stas);   s_stas = nullptr;
+        free(s_probes); s_probes = nullptr;
+        free(s_dhits);  s_dhits = nullptr;
+        return false;
+    }
+    if (esp_now_init() != ESP_OK) {
+        free(s_aps);    s_aps = nullptr;
+        free(s_zbs);    s_zbs = nullptr;
+        free(s_pmkids); s_pmkids = nullptr;
+        free(s_hss);    s_hss = nullptr;
+        free(s_stas);   s_stas = nullptr;
+        free(s_probes); s_probes = nullptr;
+        free(s_dhits);  s_dhits = nullptr;
+        return false;
+    }
     esp_now_register_recv_cb(on_recv);
 
     /* Broadcast peer for sending HELLOs if we want. */
@@ -392,6 +418,13 @@ void c5_stop(void)
 {
     if (!s_started) return;
     esp_now_deinit();
+    free(s_aps);    s_aps = nullptr;
+    free(s_zbs);    s_zbs = nullptr;
+    free(s_pmkids); s_pmkids = nullptr;
+    free(s_hss);    s_hss = nullptr;
+    free(s_stas);   s_stas = nullptr;
+    free(s_probes); s_probes = nullptr;
+    free(s_dhits);  s_dhits = nullptr;
     s_started = false;
 }
 

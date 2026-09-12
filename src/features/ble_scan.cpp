@@ -49,7 +49,7 @@ struct ble_dev_t {
     bool     is_public;
 };
 
-#define BLE_MAX_DEVS 48
+#define BLE_MAX_DEVS 32
 
 static ble_dev_t s_devs[BLE_MAX_DEVS];
 static int       s_count = 0;

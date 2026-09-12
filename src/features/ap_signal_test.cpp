@@ -89,13 +89,15 @@ static bool ap_bring_up(uint8_t ch)
      * esp_netif_create_default_wifi_ap below will then succeed cleanly. */
     esp_netif_t *sta_if = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (sta_if) esp_netif_destroy_default_wifi(sta_if);
-    /* Always create a fresh AP netif. ap_tear_down destroys it on exit
-     * so the next entry needs it back. (Old s_ap_netif_created static
-     * skipped recreation after first run, but ap_tear_down now nukes
-     * the netif so the cache went stale.) */
-    if (!esp_netif_get_handle_from_ifkey("WIFI_AP_DEF")) {
-        esp_netif_create_default_wifi_ap();
-    }
+    /* Always destroy-then-recreate the AP netif rather than gating on
+     * an existence check — full sweep test 2026-09-12 found that check
+     * insufficient to prevent a duplicate-key assert crash elsewhere in
+     * this same raw-AP chain (Karma / Portal / Evil Twin / CIW all feed
+     * into the same WIFI_AP_DEF ifkey). ap_tear_down destroys it on
+     * exit, so re-creating fresh here is always correct. */
+    esp_netif_t *old_ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (old_ap) esp_netif_destroy_default_wifi(old_ap);
+    esp_netif_create_default_wifi_ap();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     /* Shrunk buffer counts — match wifi_portal exactly. Defaults OOM. */

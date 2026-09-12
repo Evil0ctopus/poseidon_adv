@@ -12,24 +12,50 @@
 #include <esp_event.h>
 #include <esp_bt.h>
 #include <NimBLEDevice.h>
+#include <string.h>
 
 static radio_domain_t s_active = RADIO_NONE;
+
+static void destroy_default_netifs(void)
+{
+    esp_netif_t *matches[4] = {};
+    int count = 0;
+    for (esp_netif_t *it = esp_netif_next_unsafe(nullptr);
+         it && count < 4; it = esp_netif_next_unsafe(it)) {
+        const char *key = esp_netif_get_ifkey(it);
+        if (key && (strcmp(key, "WIFI_STA_DEF") == 0 ||
+                    strcmp(key, "WIFI_AP_DEF") == 0)) {
+            matches[count++] = it;
+        }
+    }
+    for (int i = 0; i < count; ++i)
+        esp_netif_destroy_default_wifi(matches[i]);
+}
+
+static esp_netif_t *find_default_netif(const char *wanted)
+{
+    for (esp_netif_t *it = esp_netif_next_unsafe(nullptr);
+         it; it = esp_netif_next_unsafe(it)) {
+        const char *key = esp_netif_get_ifkey(it);
+        if (key && strcmp(key, wanted) == 0) return it;
+    }
+    return nullptr;
+}
 
 void wifi_release_driver(void)
 {
     wifi_mode_t cur = WIFI_MODE_NULL;
-    if (esp_wifi_get_mode(&cur) != ESP_OK) return;
+    if (esp_wifi_get_mode(&cur) == ESP_OK) {
+        esp_wifi_set_promiscuous(false);
+        esp_wifi_disconnect();
+        esp_wifi_stop();
+        delay(50);
+        esp_wifi_deinit();
+    }
 
-    esp_wifi_set_promiscuous(false);
-    esp_wifi_disconnect();
-    esp_wifi_stop();
-    delay(50);
-    esp_wifi_deinit();
-
-    esp_netif_t *sta_if = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (sta_if) esp_netif_destroy_default_wifi(sta_if);
-    esp_netif_t *ap_if = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-    if (ap_if) esp_netif_destroy_default_wifi(ap_if);
+    /* Netifs can survive a partially failed or already-deinitialized WiFi
+     * driver; never let the mode probe suppress this cleanup. */
+    destroy_default_netifs();
 }
 
 void wifi_force_clean_sta(void)
@@ -80,19 +106,18 @@ bool wifi_lean_sta_init(void)
      * room for default 32-buffer Arduino init). */
     esp_netif_init();
     esp_event_loop_create_default();
-    /* Repro fix 2026-06-06: a previous AP-mode feature (Portal,
-     * Evil Twin, CIW, AP Signal Test, SaltyJack rogue-DHCP) may have
-     * left a default AP netif resident. Creating a STA netif on top
-     * conflicts and panic-restarts during the next esp_wifi_init.
-     * Destroy any leftover AP netif first. */
-    esp_netif_t *ap_if = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-    if (ap_if) esp_netif_destroy_default_wifi(ap_if);
-    /* The static cache below tracked "we already created the STA netif
-     * this boot". After the AP cleanup above, the STA netif may also
-     * have been collateral-destroyed by a prior call — always probe
-     * the handle directly instead of trusting the cache. */
-    if (!esp_netif_get_handle_from_ifkey("WIFI_STA_DEF")) {
+    /* Reuse an enumerated default STA when the Arduino/IDF registry still
+     * owns one but the direct ifkey lookup missed it. Creating a second
+     * default STA is an assert, so only create one when none exists. */
+    esp_netif_t *existing_sta = find_default_netif("WIFI_STA_DEF");
+    if (!existing_sta) {
+        destroy_default_netifs();
+        esp_netif_init();
+        esp_event_loop_create_default();
         esp_netif_create_default_wifi_sta();
+    } else {
+        esp_netif_t *stale_ap = find_default_netif("WIFI_AP_DEF");
+        if (stale_ap) esp_netif_destroy_default_wifi(stale_ap);
     }
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     /* TIGHT buffer config. Cardputer-Adv has ~52 KB DMA-capable RAM
@@ -222,7 +247,21 @@ bool radio_switch(radio_domain_t target)
             Serial.printf("[radio] NimBLEDevice::init() -> %d bt_ctrl_status=%d\n",
                           (int)ok, (int)esp_bt_controller_get_status());
             Serial.flush();
-            if (!ok) return false;
+            if (!ok) {
+                /* NimBLEDevice::init() can fail AFTER esp_bt_controller_init()
+                 * already succeeded (bt_ctrl_status left at INITED, not IDLE).
+                 * NimBLEDevice::isInitialized() stays false in that case, so
+                 * the normal teardown path above never runs and the
+                 * controller's ~50-60 KB stays stuck resident for the rest of
+                 * the boot -- starves the very next feature's WiFi/BLE init
+                 * too. Force-release here regardless of NimBLE's own flag. */
+                if (esp_bt_controller_get_status() != ESP_BT_CONTROLLER_STATUS_IDLE) {
+                    esp_bt_controller_disable();
+                    esp_bt_controller_deinit();
+                }
+                esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+                return false;
+            }
         } else {
             Serial.println("[radio] NimBLE already initialized"); Serial.flush();
         }

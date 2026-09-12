@@ -438,11 +438,14 @@ static esp_err_t karma_wifi_init(void)
 
     esp_netif_init();
     esp_event_loop_create_default();
-    static bool s_netif_made = false;
-    if (!s_netif_made) {
-        esp_netif_create_default_wifi_sta();
-        s_netif_made = true;
-    }
+    /* Destroy-then-recreate instead of a sticky one-shot flag — a sticky
+     * flag left the netif missing if another feature destroyed
+     * WIFI_STA_DEF between Karma sessions, and a bare existence check
+     * wasn't reliable enough to prevent a duplicate-key assert crash
+     * found during the full-menu sweep test (2026-09-12). */
+    esp_netif_t *old_sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (old_sta) esp_netif_destroy_default_wifi(old_sta);
+    esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     cfg.static_tx_buf_num  = 0;
@@ -647,9 +650,11 @@ static void run_probe_sniff(void)
             cnt = s_probe_count;
             portEXIT_CRITICAL(&s_probe_mux);
             /* Repaint on change or periodic */
-            draw_probe_list(cursor);
-            last_count  = cnt;
-            last_cursor = cursor;
+            if (cnt != last_count || cursor != last_cursor) {
+                draw_probe_list(cursor);
+                last_count  = cnt;
+                last_cursor = cursor;
+            }
         }
         /* Active listening indicator every iteration so a quiet channel
          * (no probes yet) never reads as a frozen device. Self-throttles. */
@@ -683,6 +688,10 @@ static void run_probe_sniff(void)
             ui_toast("Probes saved to SD", T_GOOD, 700);
             break;
         }
+        /* Any handled key may have drawn a toast over the list region;
+         * force the next periodic tick to repaint even if count/cursor
+         * are unchanged, so toast residue never lingers on screen. */
+        last_count = -1;
     }
 
     esp_wifi_set_promiscuous(false);

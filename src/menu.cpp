@@ -60,6 +60,7 @@ extern void feat_wifi_apclone(void);
 extern void feat_evil_twin(void);
 extern void feat_wifi_beacon_spam(void);
 extern void feat_wifi_wardrive(void);
+extern void feat_wifi_wardrive_hybrid(void);
 extern void feat_wifi_probe(void);
 extern void feat_wifi_karma(void);
 extern void feat_wifi_pmkid(void);
@@ -290,7 +291,9 @@ static const menu_node_t MENU_WIFI[] = {
       "deauth (Spacehuhn/deauther.cc signature), evil twin (dup SSID/diff BSSID), "
       "beacon spam, WiFi Karma (probe-resp w/o beacon), BLE spoof (dup name/diff "
       "MAC), BLE flood. Time-slices WiFi promisc + NimBLE scan. Alerts → "
-      "/poseidon/captures/defmon/ with GPS coords. Audio cue on each new class." },
+      "/poseidon/captures/defmon/ with GPS coords. Audio cue on each new class. "
+      "Live wifi/ble counters track every distinct device seen this session, and "
+      "every new WiFi AP is GPS-tagged to a WiGLE CSV alongside the anomaly log." },
     { 'u', "Cable Guard", "Detect malicious USB cable/charger RF implants", nullptr, feat_usb_guard,
       "Two-phase RF delta scan. Baseline 2.4 GHz APs with the suspect cable "
       "UNPLUGGED, then plug it in and re-scan: any radio that switched on with "
@@ -428,7 +431,7 @@ static const menu_node_t MENU_BLE[] = {
       "Broadcasts fake Apple Find My / AirTag advertisements with random "
       "rotating keys. Passing iPhones with Find My enabled relay your 'tags' "
       "to iCloud's location service. Modes: 1 tag, flock of 8, flock of 32." },
-    { 'd', "Salty Deep", "Wireless toy scanner + controller", nullptr, feat_ble_toys,
+    { 'v', "Salty Deep", "Wireless toy scanner + controller", nullptr, feat_ble_toys,
       "Scans for Lovense / WeVibe / Satisfyer / Svakom / Kiiroo / Lelo / "
       "Magic Motion devices. Connect to a Lovense and control vibration "
       "intensity 0-20 via the keyboard. Number keys 1-9 jump to a level; "
@@ -546,7 +549,7 @@ static const menu_node_t MENU_NET[] = {
       "One-button full MitM chain: DHCP starvation to exhaust the legitimate "
       "pool, then rogue DHCP to hand out attacker gateway/DNS, then launches "
       "the captive portal for credential capture." },
-    { 'w', "WPAD Abuse", "Proxy autoconfig NTLM capture", nullptr, feat_wpad_abuse,
+    { 'z', "WPAD Abuse", "Proxy autoconfig NTLM capture", nullptr, feat_wpad_abuse,
       "Creates a SoftAP with DNS wildcard, serves wpad.dat pointing all "
       "traffic through our proxy, then challenges with NTLM 407 to capture "
       "NTLMv2 hashes. Saved to /poseidon/credentials/ntlm_hashes.txt." },
@@ -746,9 +749,10 @@ static const menu_node_t MENU_TOOLS[] = {
     { 'd', "Dice/8ball", "Dice, coin flip, magic 8-ball", nullptr, feat_tool_chance,
       "Randomizers. M cycles mode: 2d6 dice sum, heads/tails coin, or "
       "magic 8-ball answer. SPACE rolls." },
-    { 'm', "Morse", "Type text, sends in morse", nullptr, feat_tool_morse,
-      "Type a string and it blinks the screen cyan + beeps the speaker in "
-      "Morse code. Dot = 100ms, dash = 300ms." },
+    { 'm', "Morse", "Send or listen + decode morse", nullptr, feat_tool_morse,
+      "S: type a string and it blinks the screen cyan + beeps the speaker "
+      "in Morse code. L: listens through the mic and live-decodes incoming "
+      "morse tone timing back into text; unit speed auto-tracks the sender." },
     { 'r', "MAC rand", "Randomize WiFi MAC", nullptr, feat_tool_mac_rand,
       "Generates a random locally-administered MAC and applies it to the WiFi "
       "station interface. Resets on reboot." },

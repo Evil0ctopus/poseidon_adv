@@ -242,7 +242,11 @@ static portMUX_TYPE s_bs_mux = portMUX_INITIALIZER_UNLOCKED;
  * mutex and has tripped WDT resets in past testing. Callback builds the
  * hashcat line and enqueues it; hop_task drains + flushes to SD. */
 struct capture_t { char line[1024]; };
-#define CAPTURE_Q 8
+/* 4 slots, not 8 -- flush drains + SD-flushes every ~500ms and a dropped
+ * line (queue full) was already an accepted degradation path (see
+ * capture_enqueue below), so this just trims a rarely-needed depth
+ * rather than changing behavior. Saves 4KB of static RAM. */
+#define CAPTURE_Q 4
 static capture_t s_capq[CAPTURE_Q];
 static volatile int s_capq_head = 0;
 static volatile int s_capq_tail = 0;
@@ -351,7 +355,7 @@ struct wdr_row_t {
     char     utc[12];
     bool     pending;
 };
-#define WDR_Q 8
+#define WDR_Q 4
 static wdr_row_t s_wdr_q[WDR_Q];
 static volatile int s_wdr_head = 0;
 static volatile int s_wdr_tail = 0;
