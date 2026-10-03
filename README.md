@@ -55,7 +55,7 @@ POSEIDON is a **pocket hacking gadget**. It runs on a tiny handheld with a real 
 - 🚗 **Remotes & signals** — record and replay garage doors, car fobs, doorbells, smart plugs *(on stuff you own)*
 - 📺 **Infrared** — a universal TV remote, plus the classic "turn off every TV in the room" button
 - 🐾 **Argus** — your on-screen pet that hunts WiFi on its own and reacts with moods
-- 🎨 **Six looks** — flip the whole interface between six themes, matrix-green to vaporwave
+- 🎨 **Eleven looks** — Deepwater navy/cyan by default, plus matrix-green, paper, vaporwave and more
 
 **Get it on your device (~2 minutes):**
 
@@ -81,7 +81,7 @@ It's in the same genre as Flipper Zero, Bruce, Evil-M5Project, and ESP32Marauder
 
 - **Letter-mnemonic menus** — every item has a hotkey, so you jump straight to it
 - **Typed parameters** — enter a channel, an SSID, a frequency directly, no thumb-stick scrolling
-- **Six swappable themes** + a procedural ambient motion layer painted behind every menu
+- **Eleven swappable themes** + optional ambient motion and a reduced-motion setting
 - **Argus** — a 96x96 mood-sprite gotchi that hunts handshakes on its own while you browse the menu
 
 Runs standalone on the Cardputer-Advance. Optional snap-on satellites extend the radio range:
@@ -185,19 +185,97 @@ ESP32-C5 companion over ESP-NOW for **5 GHz WiFi** + **802.15.4 Zigbee/Thread**.
 PigSync ESP-NOW presence beacon — foundation for multi-device coordination.
 
 ### Tools (9)
-Flashlight · Stopwatch · Dice/Coin/8-Ball · Morse · MAC Randomizer · Calculator · Screen Test · SD Format · **Theme Picker** (6 palettes)
+Flashlight · Stopwatch · Dice/Coin/8-Ball · Morse · MAC Randomizer · Calculator · Screen Test · SD Format · **Theme Picker** (11 palettes)
 
-### Themes (6)
+### Themes (11)
 | Theme | Aesthetic |
 |---|---|
-| POSEIDON | Cyberpunk cyan / magenta / purple on black — default |
+| POSEIDON | Deepwater navy / ice-white / cyan, restrained lavender — default |
 | MATRIX | Souped-up hacker green-on-black + matrix rain ambient |
 | E-INK | Paper white, daytime / outdoor / minimal |
 | SYNTHWAVE | Vaporwave hot magenta + pastel cyan on midnight grape — 80s night-sky vibe |
 | PHANTOM | Deep violet / lavender — visually cohesive with the phantom-* tool suite |
 | BLOOD | fsociety tactical red on pure black — reads as "device is attacking" |
+| AMBER CRT | Warm amber terminal |
+| NIGHT CITY | Electric yellow and cyan |
+| SOLARIS | Warm solar gold on charcoal |
+| NORDIC FROST | Glacial cyan and silver |
+| GHOST PURPLE | Electric violet on obsidian |
 
-Plus a procedural ambient motion layer (`ui_ambient_tick`) painted behind every menu draw, theme-aware. Live preview at `System → Ambient Preview`. Theme-matched screensavers kick in at 2 min idle.
+Ambient decoration is optional and off for new preferences; existing saved choices
+are preserved. Preview it in `System → Ambient`. Reduced motion pauses decoration
+and automatic animated screensavers, without pausing live measurements.
+
+### Deepwater interface
+
+- **Boot:** a pixel-aligned trident reveal automatically opens the menu after
+  about 900 ms. Any key skips; security-key boot mode still bypasses the splash.
+- **Navigation:** Terminal shows six rows plus the selected item's description;
+  Carousel shows one domain card with consistent 24px icons. Letter shortcuts,
+  `;`/`.` navigation, ENTER, Back and `=`/`?` help remain available.
+  Changing layouts returns to the root in the new layout immediately.
+- **Text:** names fit their columns with visible `...` overflow. Help scrolls
+  with `;`/`.`; ENTER or Back closes it. WiFi detail shows the full 32-byte SSID.
+- **Shortcut hints:** long footers are paged rather than discarded. `Ctrl+/`
+  advances the page (`^/ more`), including inside features. TAB still belongs
+  to features that use it.
+- **Display settings:** `System → Display` controls motion (`M`), large text
+  (`B`) and ambient decoration (`A`). Large text enlarges menu labels, WiFi/BLE
+  results, help and notices; status and secondary metadata stay compact.
+- **Feedback:** notices wrap within the display and can be dismissed early.
+  Destructive device settings and file deletion require ENTER confirmation;
+  Back cancels without performing the operation.
+- **Memory:** menu navigation and event panels do not allocate full-screen
+  animation buffers. The UI does not require PSRAM. Heap diagnostics remain
+  in `System → Heap`, rather than crowding the status bar.
+
+#### UI validation
+
+Host layout, text and adjacent regression tests:
+
+```text
+pio test -e native-test -f test_ui_layout -f test_wifi_logic -f test_ble_db -f test_heap_budget
+pio run -e cardputer
+pio run -e cardputer-launcher
+```
+
+On Windows, with the firmware running on a connected development Cardputer:
+
+```powershell
+.\scripts\test_deepwater_ui.ps1 -Port COM5
+```
+
+The smoke script exercises only UI navigation, theme previews, display settings
+and **cancel-only** confirmation dialogs, including SaltyJack's list, paged grid,
+card and help views without running its tools. It restores the starting theme/layout/
+display preferences, checks paint timing against 100 ms and checks retained heap.
+Artifacts go under `.pio\ui-smoke`. The serial `D` command reads back the LCD
+in one-row chunks with a checksum; if panel readback is unavailable, the script
+reports it rather than claiming screenshots succeeded. Use `-SkipCapture` to
+run navigation checks alone. Paint timing is not an end-to-end keyboard latency
+measurement or a guarantee for every feature.
+Readback pauses UI input while streaming: use it on idle menus, not during
+time-critical feature operations.
+
+The development unit also has a custom **dual-app Launcher** layout:
+`cardputer-launcher-dual`, described in
+[launcher_dual_app_8Mb.csv](support_files/launcher_dual_app_8Mb.csv).
+Its POSEIDON slot is `0x1E0000`, size `0x2D0000`; Meshtastic is at `0x4B0000`.
+This differs from the standard Launcher profile. Verify the actual device
+partition table before updating, then write **only the application** to its
+verified slot. Do not use a factory image or PlatformIO's full upload target
+over an existing multi-app Launcher installation.
+
+Verified on the connected Cardputer-Adv during the Deepwater redesign:
+the four-suite native command above passed **33/33 tests**, and
+`pio run -e cardputer -e cardputer-launcher -e cardputer-launcher-dual` passed
+all three profiles. The final hardware smoke sweep passed, including the
+last SaltyJack grid page and preference restoration; menu paint maximum
+was **41 ms**, with no retained heap loss in the final warmed sweep.
+Application-only flashing passed its hash verification, and partition-table
+readback matched the pre-update backup byte-for-byte. These results cover
+shared UI and safe navigation, not a transmit-feature or destructive-operation
+audit.
 
 ## Signature Features
 
@@ -207,7 +285,9 @@ Plus a procedural ambient motion layer (`ui_ambient_tick`) painted behind every 
 
 **SaltyJack — a pocket LAN attack arsenal.** Drop POSEIDON onto a network (WiFi STA or wired W5500) and run the kind of attacks that usually need a laptop and a Pi: **DHCP starvation**, **rogue DHCP**, **Responder** (LLMNR/NBT-NS → NTLM), **WPAD** and **Autodiscover** credential capture, plus an **on-device NTLMv2 cracker**. A faithful port that proudly credits [@7h30th3r0n3](https://github.com/7h30th3r0n3)'s RaspyJack and Evil-M5Project — go star both.
 
-**Six themes + ambient motion.** POSEIDON (cyberpunk), MATRIX (green rain), E-INK (daylight paper), SYNTHWAVE (vaporwave), PHANTOM (violet), BLOOD (fsociety red). Each theme repaints the whole UI, drives its own procedural ambient layer behind every menu, and brings a matched screensaver. Switch live in `System → Theme Picker`.
+**Deepwater + ten alternate themes.** Shared chrome, domain icons, bounded text
+and optional motion keep the interface coherent. Switch palettes in
+`System → Theme`; adjust motion and large text in `System → Display`.
 
 ## Hardware
 

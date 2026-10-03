@@ -81,7 +81,7 @@ static bool ap_matches_filter(const ap_t &a)
     return false;
 }
 
-#define SCAN_ROWS 9
+#define SCAN_ROWS (ui_big_text() ? 3 : 8)
 
 /* Build the filtered index list (visible items). Returns count. */
 static int build_filtered(int *idx)
@@ -103,8 +103,7 @@ static void draw_list_header(void)
     } else {
         snprintf(buf, sizeof(buf), "APs %d", s_ap_count);
     }
-    ui_text_w(4, BODY_Y + 2, SCR_W - 8,
-              (s_filter[0] || s_filter_open_only) ? T_WARN : T_ACCENT, "%s", buf);
+    ui_header(buf);
 }
 
 /* Paint one AP row in full over its own background (no body clear). */
@@ -113,11 +112,22 @@ static void draw_ap_row(int r, const int *idx, int first, int cursor)
     auto &d = M5Cardputer.Display;
     int ai = idx[first + r];
     const ap_t &a = s_aps[ai];
-    int y = BODY_Y + 14 + r * 11;
+    const bool large = ui_big_text();
+    const int row_height = large ? 29 : 11;
+    int y = BODY_Y + 20 + r * row_height;
     bool sel = (first + r == cursor);
-    uint16_t bg = sel ? 0x18A3 : T_BG;
+    uint16_t bg = sel ? T_SEL_BG : T_BG;
     uint16_t fg = sel ? T_ACCENT : T_FG;
-    d.fillRect(0, y - 1, SCR_W, 11, bg);
+    d.fillRect(0, y - 1, SCR_W, row_height, bg);
+    if (large) {
+        ui_label(6, y, 228, fg, bg, a.ssid[0] ? a.ssid : "(hidden)", 2);
+        char metadata[40];
+        snprintf(metadata, sizeof(metadata), "%s  CH %u  %d dBm  %s",
+                 a.is_5g ? "5G" : "2G", a.channel, a.rssi, auth_str(a.auth));
+        ui_label(6, y + 18, 228, T_DIM, bg, metadata);
+        if (sel) d.fillRect(0, y, 2, row_height - 3, T_ACCENT);
+        return;
+    }
 
     /* band tag | ch | rssi | auth | ssid */
     d.setTextColor(a.is_5g ? T_ACCENT : T_DIM, bg);
@@ -141,24 +151,27 @@ static void draw_ap_row(int r, const int *idx, int first, int cursor)
         d.print("W");
     }
     d.setTextColor(fg, bg);
-    d.setCursor(94, y);
-    d.print(a.ssid);
+    ui_label(94, y, 138, fg, bg, a.ssid[0] ? a.ssid : "(hidden)");
+    if (sel) d.fillRect(0, y, 2, 8, T_ACCENT);
 }
 
 /* Full window repaint over a one-time body clear. Used at entry and after
  * any full-screen event (detail view, help modal) overwrites the body. */
 static void draw_list(int cursor)
 {
-    ui_clear_body();
+    auto &d = M5Cardputer.Display;
+    d.fillRect(0, BODY_Y + 15, SCR_W, 4, T_BG);
+    d.fillRect(0, BODY_Y + 107, SCR_W, BODY_H - 107, T_BG);
     draw_list_header();
 
     int idx[MAX_APS];
     int n = build_filtered(idx);
     if (n == 0) {
+        M5Cardputer.Display.fillRect(0, BODY_Y + 16, SCR_W, BODY_H - 16, T_BG);
         auto &d = M5Cardputer.Display;
         d.setTextColor(T_DIM, T_BG);
         d.setCursor(4, BODY_Y + 18);
-        d.print(s_scan_running ? "scanning..." : "no matches");
+        d.print(s_scan_running ? "Scanning for networks..." : "No networks match this filter.");
         return;
     }
     if (cursor >= n) cursor = n - 1;
@@ -168,8 +181,12 @@ static void draw_list(int cursor)
     if (first < 0) first = 0;
     if (first + SCAN_ROWS > n) first = max(0, n - SCAN_ROWS);
 
-    for (int r = 0; r < SCAN_ROWS && first + r < n; ++r)
-        draw_ap_row(r, idx, first, cursor);
+    for (int r = 0; r < SCAN_ROWS; ++r) {
+        if (first + r < n) draw_ap_row(r, idx, first, cursor);
+        else d.fillRect(0, BODY_Y + 19 + r * (ui_big_text() ? 29 : 11),
+                        SCR_W, ui_big_text() ? 29 : 11, T_BG);
+    }
+    ui_scrollbar(237, BODY_Y + 19, 88, first, SCAN_ROWS, n);
 }
 
 /* Other features use g_last_selected_ap. We set it here so the user
@@ -201,11 +218,11 @@ void wifi_show_ap_details(const ap_t &a)
     const char *vendor = ble_db_oui(oui);
 
     d.setTextColor(T_FG, T_BG);
-    d.setCursor(4, BODY_Y + 16); d.printf("SSID : %.24s", a.ssid);
+    ui_text(4, BODY_Y + 16, T_FG, "SSID %s", a.ssid);
     d.setCursor(4, BODY_Y + 28); d.printf("BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
         a.bssid[0], a.bssid[1], a.bssid[2], a.bssid[3], a.bssid[4], a.bssid[5]);
     d.setTextColor(T_DIM, T_BG);
-    d.setCursor(4, BODY_Y + 40); d.printf("MFR  : %s", vendor ? vendor : "Unknown / Generic");
+    ui_text(4, BODY_Y + 40, T_DIM, "MFR  : %s", vendor ? vendor : "Unknown / Generic");
     d.setTextColor(T_FG, T_BG);
     d.setCursor(4, BODY_Y + 52); d.printf("CH   : %-3u   AUTH: %s%s", a.channel, auth_str(a.auth), a.wps ? " (WPS!)" : "");
 
@@ -287,53 +304,35 @@ static void ensure_scan_evt(void) {
     }
 }
 
-#define RADAR_CX 58
-#define RADAR_CY (BODY_Y + 56)
-#define RADAR_R  40
+static int s_painted_pass = -1;
+static int s_painted_found = -1;
 
 /* Static chrome, drawn once before the sweep starts. */
 static void scan_screen_static(void) {
     ui_clear_body();
-    auto &d = M5Cardputer.Display;
-    d.setTextSize(2);
-    d.setTextColor(T_ACCENT, T_BG);
-    d.setCursor(110, BODY_Y + 14); d.print("SCANNING");
-    d.setTextSize(1);
-    d.setTextColor(T_DIM, T_BG);
-    d.setCursor(110, BODY_Y + 36); d.print("2.4 GHz  all ch");
-    ui_draw_footer("`=cancel");
+    ui_header("WIFI SCAN", "LIVE");
+    ui_label(8, BODY_Y + 27, 224, T_FG, T_BG, "Finding networks", 2);
+    ui_label(8, BODY_Y + 51, 224, T_DIM, T_BG, "2.4 GHz / all channels");
+    s_painted_pass = -1;
+    s_painted_found = -1;
+    ui_draw_footer("` cancel");
 }
 
-/* One animation frame: clear + redraw the radar (so the sweep doesn't smear),
- * plot a contact per AP found so far, and refresh the live counters. */
+/* Small busy indicator; counters repaint only when actual data changes. */
 static void scan_screen_frame(int pass, int found, uint32_t elapsed) {
     auto &d = M5Cardputer.Display;
-    d.fillRect(RADAR_CX - RADAR_R - 2, RADAR_CY - RADAR_R - 2,
-               (RADAR_R + 2) * 2, (RADAR_R + 2) * 2, T_BG);
-    ui_radar(RADAR_CX, RADAR_CY, RADAR_R, T_ACCENT2);
-    for (int i = 0; i < found && i < MAX_APS; ++i) {
-        float ang = i * 2.39996f;                 /* golden angle, spreads them out */
-        int rssi = s_aps[i].rssi;
-        if (rssi > -30) rssi = -30;
-        if (rssi < -90) rssi = -90;
-        int dist = 6 + (RADAR_R - 12) * (rssi + 90) / 60;   /* stronger = closer in */
-        int x = RADAR_CX + (int)(cosf(ang) * dist);
-        int y = RADAR_CY + (int)(sinf(ang) * dist);
-        d.fillCircle(x, y, 2, T_GOOD);
-        d.drawPixel(x, y, 0xFFFF);
+    (void)elapsed;
+    if (pass != s_painted_pass) {
+        s_painted_pass = pass;
+        if (pass <= 2) ui_text_w(8, BODY_Y + 72, 174, T_DIM, "Local pass %d / 2", pass);
+        else ui_label(8, BODY_Y + 72, 174, T_DIM, T_BG, "Satellite merge");
     }
-    d.setTextSize(1);
-    d.fillRect(110, BODY_Y + 50, SCR_W - 110, 46, T_BG);
-    d.setTextColor(T_DIM, T_BG);
-    d.setCursor(110, BODY_Y + 54); d.printf("pass %d/2", pass);
-    d.setTextColor(T_GOOD, T_BG);
-    d.setCursor(110, BODY_Y + 70); d.printf("found %d ap%s", found, found == 1 ? "" : "s");
-    d.setTextColor(T_ACCENT, T_BG);
-    char sweep[10] = "sweep";
-    int dots = (elapsed / 300) % 4;
-    for (int i = 0; i < dots; ++i) sweep[5 + i] = '.';
-    sweep[5 + dots] = '\0';
-    d.setCursor(110, BODY_Y + 86); d.print(sweep);
+    if (found != s_painted_found) {
+        s_painted_found = found;
+        ui_text_w(8, BODY_Y + 91, 174, T_GOOD, "%d networks found", found);
+    }
+    d.fillRect(198, BODY_Y + 68, 26, 26, T_BG);
+    ui_radar(211, BODY_Y + 81, 10, T_ACCENT);
 }
 
 /* Run one scan pass non-blocking, animating until SCAN_DONE. Returns false if
@@ -502,7 +501,7 @@ void feat_wifi_scan(void)
             while (millis() < deadline) {
                 /* Keep the scan screen alive — animate the same radar so the
                  * 5 GHz merge wait doesn't read as a freeze. */
-                scan_screen_frame(2, s_ap_count, millis());
+                scan_screen_frame(3, s_ap_count, millis());
                 if (millis() - last_chk > 150) {
                     last_chk = millis();
                     c5_ap_t tmp[4];
@@ -534,6 +533,7 @@ void feat_wifi_scan(void)
     }
 
     ui_draw_footer("/=flt O=open S=save R=rescan ENTER=info `=back");
+    ui_force_clear_body();
     draw_list(s_saved_cursor);
 
     int cursor = s_saved_cursor;
@@ -600,6 +600,7 @@ void feat_wifi_scan(void)
             last_cursor  = cursor;
             last_first   = first;
             last_running = s_scan_running;
+            ui_scrollbar(237, BODY_Y + 19, 88, first, SCAN_ROWS, n);
         }
         /* Radar sweep in top-right while scanning. */
         if (s_scan_running) ui_radar(SCR_W - 16, BODY_Y + 8, 7, 0x07FF);

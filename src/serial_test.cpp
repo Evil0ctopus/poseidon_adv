@@ -7,6 +7,9 @@
 #include "version.h"
 #include "gps.h"
 #include "heap_budget.h"
+#include "ui.h"
+#include "theme.h"
+#include "ui_ambient.h"
 #include <Arduino.h>
 
 extern const menu_node_t *g_current_feature_item;  /* from menu.cpp */
@@ -45,6 +48,13 @@ static void serial_cmd_task(void *)
                                   (unsigned long)(now - boot_ms),
                                   (unsigned long)idle,
                                   feat);
+                    Serial.printf("[UI_STATE] theme=%d layout=%d motion=%d large=%d ambient=%d\n",
+                                  (int)theme_current_id(), (int)menu_style_get(),
+                                  ui_motion_enabled(), ui_big_text(), ui_ambient_enabled());
+                }
+                else if (buf[0] == 'D') {
+                    // Display access stays on the UI task, never this serial task.
+                    input_inject(PK_UI_CAPTURE);
                 }
                 else if (buf[0] == 'T') {
                     static const char *const names[] = {

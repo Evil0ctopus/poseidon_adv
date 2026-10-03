@@ -279,14 +279,14 @@ void feat_usb_guard(void)
                     const hit_t &h = hits[first + r];
                     int y = BODY_Y + 16 + r * 12;
                     bool sel = (first + r == cursor);
-                    if (sel) d.fillRect(0, y - 1, SCR_W, 12, 0x18C7);
+                    if (sel) d.fillRect(0, y - 1, SCR_W, 12, T_SEL_BG);
                     uint16_t sc = h.score >= 70 ? T_BAD : h.score >= 45 ? T_WARN : T_DIM;
-                    d.setTextColor(sc, sel ? 0x18C7 : T_BG);
+                    d.setTextColor(sc, sel ? T_SEL_BG : T_BG);
                     d.setCursor(2, y);  d.printf("%3d", h.score);
-                    d.setTextColor(sel ? T_ACCENT : T_FG, sel ? 0x18C7 : T_BG);
+                    d.setTextColor(sel ? T_ACCENT : T_FG, sel ? T_SEL_BG : T_BG);
                     d.setCursor(24, y);
                     d.printf("%.16s", h.ap.ssid[0] ? h.ap.ssid : "<hidden>");
-                    d.setTextColor(T_DIM, sel ? 0x18C7 : T_BG);
+                    d.setTextColor(T_DIM, sel ? T_SEL_BG : T_BG);
                     d.setCursor(132, y); d.printf("c%u", h.ap.channel);
                 }
             }

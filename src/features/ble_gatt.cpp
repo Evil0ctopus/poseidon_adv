@@ -261,8 +261,8 @@ static void draw_tree(int cursor)
         const gatt_node_t &n = s_flat[first + r];
         int y = BODY_Y + 18 + r * 11;
         bool sel = (first + r == cursor);
-        if (sel) d.fillRect(0, y - 1, SCR_W, 11, 0x18C7);
-        uint16_t bg = sel ? 0x18C7 : T_BG;
+        if (sel) d.fillRect(0, y - 1, SCR_W, 11, T_SEL_BG);
+        uint16_t bg = sel ? T_SEL_BG : T_BG;
         if (n.is_svc) {
             d.setTextColor(T_WARN, bg);
             d.setCursor(4, y);

@@ -224,7 +224,7 @@ static bool pick_favorite(void)
                 int y = BODY_Y + 18 + r * 12;
                 bool sel = (i == cursor);
                 if (sel) d.fillRect(0, y - 1, SCR_W, 12, 0x3007);
-                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? 0x3007 : T_BG);
+                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? T_SEL_BG : T_BG);
                 d.setCursor(4, y);
                 d.printf("#%-6lu %.24s",
                          (unsigned long)SATCOM_FAVORITES[i].norad,

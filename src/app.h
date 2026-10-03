@@ -5,16 +5,17 @@
 
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include "theme.h"
 
 /* ---- palette (16-bit 565, via M5Cardputer.Display) ---- */
-#define COL_BG       0x0000  /* black */
-#define COL_FG       0xFFFF  /* white */
-#define COL_ACCENT   0x07FF  /* cyan */
-#define COL_WARN     0xFFE0  /* yellow */
-#define COL_BAD      0xF800  /* red */
-#define COL_GOOD     0x07E0  /* green */
-#define COL_DIM      0x7BEF  /* grey */
-#define COL_MAGENTA  0xF81F
+#define COL_BG       T_BG
+#define COL_FG       T_FG
+#define COL_ACCENT   T_ACCENT
+#define COL_WARN     T_WARN
+#define COL_BAD      T_BAD
+#define COL_GOOD     T_GOOD
+#define COL_DIM      T_DIM
+#define COL_MAGENTA  T_ACCENT2
 
 /* ---- display geometry ---- */
 #define SCR_W 240

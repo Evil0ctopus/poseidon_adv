@@ -369,13 +369,13 @@ void feat_c5_scan_5g(void)
                     int y = BODY_Y + 18 + r * 12;
                     bool sel = (i == cursor);
                     if (sel) d.fillRect(0, y - 1, SCR_W, 12, 0x3007);
-                    uint16_t rowbg = sel ? 0x3007 : T_BG;
+                    uint16_t rowbg = sel ? T_SEL_BG : T_BG;
                     /* Band badge. */
                     d.setTextColor(a.is_5g ? 0xF81F : T_ACCENT, rowbg);
                     d.setCursor(2, y);
                     d.print(a.is_5g ? "5G" : "2G");
                     /* RSSI */
-                    d.setTextColor(sel ? 0xFFFF : T_FG, rowbg);
+                    d.setTextColor(T_FG, rowbg);
                     d.setCursor(20, y);
                     d.printf("%4d", a.rssi);
                     /* Auth — highlight PMF-implying modes in red so
@@ -522,7 +522,7 @@ void feat_c5_deauth_5g(void)
                 int y = BODY_Y + 18 + r * 12;
                 bool sel = (i == cursor);
                 if (sel) d.fillRect(0, y - 1, SCR_W, 12, 0x3007);
-                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? 0x3007 : T_BG);
+                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? T_SEL_BG : T_BG);
                 d.setCursor(2, y);
                 d.printf("%4d ch%-3u %.20s", a.rssi, a.channel,
                          a.ssid[0] ? a.ssid : "<hidden>");
@@ -791,7 +791,7 @@ void feat_c5_pmkid_5g(void)
                 int y = BODY_Y + 18 + r * 12;
                 bool sel = (i == cursor);
                 if (sel) d.fillRect(0, y - 1, SCR_W, 12, 0x3007);
-                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? 0x3007 : T_BG);
+                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? T_SEL_BG : T_BG);
                 d.setCursor(2, y);
                 d.printf("%4d ch%-3u %.20s", a.rssi, a.channel,
                          a.ssid[0] ? a.ssid : "<hidden>");

@@ -247,12 +247,12 @@ void feat_net_ssdp(void)
             for (int r = 0; r < rows && first + r < s_dev_n; ++r) {
                 int y = BODY_Y + 18 + r * 11;
                 bool sel = (first + r == cursor);
-                if (sel) d.fillRect(0, y - 1, SCR_W, 11, 0x18C7);
+                if (sel) d.fillRect(0, y - 1, SCR_W, 11, T_SEL_BG);
                 const ssdp_dev_t &e = s_dev[first + r];
-                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? 0x18C7 : T_BG);
+                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? T_SEL_BG : T_BG);
                 d.setCursor(4, y);
                 d.printf("%-15s", e.ip);
-                d.setTextColor(sel ? 0xFFFF : (e.manufacturer[0] ? T_GOOD : T_ACCENT), sel ? 0x18C7 : T_BG);
+                d.setTextColor(sel ? T_FG : (e.manufacturer[0] ? T_GOOD : T_ACCENT), sel ? T_SEL_BG : T_BG);
                 d.setCursor(102, y);
                 d.printf("%.22s", e.friendly[0] ? e.friendly : (e.model[0] ? e.model : "?"));
             }

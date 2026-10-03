@@ -1289,7 +1289,7 @@ static int pick_shuffle(void)
 bool screensaver_check_idle(void)
 {
     load_settings();
-    if (!s_enabled) return false;
+    if (!s_enabled || !ui_motion_enabled()) return false;
     uint32_t last = input_last_input_ms();
     if (last == 0) return false;
     if (millis() - last < s_timeout_ms) return false;

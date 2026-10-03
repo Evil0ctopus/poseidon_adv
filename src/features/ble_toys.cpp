@@ -201,12 +201,12 @@ static void draw_picker_force(int cursor, bool scanning, bool force)
         }
         const toy_t &t = s_toys[first + r];
         bool sel = (first + r == cursor);
-        uint16_t bg = sel ? 0x3007 : T_BG;
+        uint16_t bg = sel ? T_SEL_BG : T_BG;
         d.fillRect(0, y - 1, SCR_W, 12, bg);
-        d.setTextColor(sel ? 0xF81F : 0xFFFF, bg);
+        d.setTextColor(sel ? T_ACCENT : T_FG, bg);
         d.setCursor(4, y);
         d.printf("[%s]", t.brand);
-        d.setTextColor(sel ? 0xFFFF : T_FG, bg);
+        d.setTextColor(T_FG, bg);
         d.setCursor(80, y);
         d.printf("%.18s", t.name);
         d.setTextColor(T_DIM, bg);

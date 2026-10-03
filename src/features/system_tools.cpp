@@ -300,29 +300,30 @@ void feat_file_browser(void)
     auto draw = [&]() {
         auto &d = M5Cardputer.Display;
         ui_clear_body();
-        d.setTextColor(T_ACCENT, T_BG);
-        d.setCursor(4, BODY_Y + 2); d.printf("FILES  %s", path);
-        d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+        ui_header(path, "FILES");
         if (s_fb_count == 0) {
             d.setTextColor(T_DIM, T_BG);
             d.setCursor(4, BODY_Y + 24);
             d.print("(empty)");
             return;
         }
-        int rows = 9;
+        int rows = 8;
         int first = cursor - rows / 2;
         if (first < 0) first = 0;
         if (first + rows > s_fb_count) first = max(0, s_fb_count - rows);
         for (int r = 0; r < rows && first + r < s_fb_count; ++r) {
             const fb_entry_t &e = s_fb[first + r];
-            int y = BODY_Y + 16 + r * 11;
+            int y = BODY_Y + 20 + r * 11;
             bool sel = (first + r == cursor);
-            if (sel) d.fillRect(0, y - 1, SCR_W, 11, 0x18C7);
-            d.setTextColor(e.is_dir ? T_ACCENT : T_FG, sel ? 0x18C7 : T_BG);
-            d.setCursor(4, y);
-            if (e.is_dir) d.printf("[DIR] %.24s", e.name);
-            else          d.printf("%.24s  %luB", e.name, (unsigned long)e.size);
+            const uint16_t bg = sel ? T_SEL_BG : T_BG;
+            d.fillRect(0, y - 1, SCR_W, 11, bg);
+            ui_label(6, y, 24, e.is_dir ? T_ACCENT : T_DIM, bg, e.is_dir ? "DIR" : "");
+            ui_label(34, y, 144, sel ? T_FG : T_DIM, bg, e.name);
+            char size[24];
+            snprintf(size, sizeof(size), "%luB", (unsigned long)e.size);
+            ui_label(184, y, 48, T_DIM, bg, e.is_dir ? "" : size);
         }
+        ui_scrollbar(237, BODY_Y + 19, 88, first, rows, s_fb_count);
     };
 
     draw();
@@ -356,6 +357,7 @@ void feat_file_browser(void)
             const fb_entry_t &e = s_fb[cursor];
             char full[192];
             snprintf(full, sizeof(full), "%s/%s", path, e.name);
+            if (!ui_confirm("DELETE FILE", e.name)) { draw(); continue; }
             if (SD.remove(full)) { ui_toast("deleted", T_GOOD, 500); fb_list(path); if (cursor >= s_fb_count) cursor = s_fb_count - 1; draw(); }
             else { ui_toast("fail", T_BAD, 500); }
         }
@@ -450,25 +452,26 @@ void feat_heap_census(void)
 
 void feat_settings(void)
 {
-    ui_clear_body();
-    auto &d = M5Cardputer.Display;
-    d.setTextColor(T_ACCENT, T_BG);
-    d.setCursor(4, BODY_Y + 2); d.print("SETTINGS");
-    d.drawFastHLine(4, BODY_Y + 12, 70, T_ACCENT);
-    d.setTextColor(T_FG, T_BG);
-    d.setCursor(4, BODY_Y + 22); d.print("[W] saved WiFi");
-    d.setCursor(4, BODY_Y + 34); d.print("[C] clear creds log");
-    d.setCursor(4, BODY_Y + 46); d.print("[F] format preferences");
-    d.setCursor(4, BODY_Y + 58); d.print("[S] format SD card");
-    d.setCursor(4, BODY_Y + 70); d.print("[R] reboot");
-    d.setCursor(4, BODY_Y + 82); d.print("[L] back to Launcher");
-    ui_draw_footer("letter=go  `=back");
+    auto draw = []() {
+        ui_force_clear_body();
+        ui_header("SETTINGS", "DEVICE");
+        const char *rows[] = {
+            "[W] Saved WiFi", "[C] Clear credentials log",
+            "[F] Clear saved preferences", "[S] Format SD card",
+            "[R] Reboot", "[L] Return to Launcher"
+        };
+        for (int r = 0; r < 6; ++r)
+            ui_label(8, BODY_Y + 21 + r * 14, 224, T_FG, T_BG, rows[r]);
+        ui_draw_footer("Letter select  ` back");
+    };
+    draw();
     while (true) {
         uint16_t k = input_poll();
         if (k == PK_NONE) { delay(20); continue; }
         if (k == PK_ESC) return;
         if (k == 'w' || k == 'W') { extern void feat_wifi_connect(); feat_wifi_connect(); return; }
         if (k == 'c' || k == 'C') {
+            if (!ui_confirm("CLEAR LOG", "Delete the saved credentials log? This cannot be undone.")) { draw(); continue; }
             bool removed = false;
             if (sd_mount()) {
                 if (SD.exists(SD_CREDS_PATH)) removed = SD.remove(SD_CREDS_PATH) || removed;
@@ -480,16 +483,21 @@ void feat_settings(void)
             return;
         }
         if (k == 'f' || k == 'F') {
+            if (!ui_confirm("CLEAR PREFERENCES", "Clear saved network preferences? Display and theme choices are retained.")) { draw(); continue; }
             Preferences p; p.begin("poseidon", false); p.clear(); p.end();
             ui_toast("prefs cleared", T_GOOD, 600); return;
         }
         if (k == 's' || k == 'S') {
+            if (!ui_confirm("FORMAT SD", "Erase the SD card and all its files? This cannot be undone.")) { draw(); continue; }
             ui_toast("formatting...", T_WARN, 300);
             if (sd_format()) ui_toast("SD formatted", T_GOOD, 900);
             else             ui_toast("SD format fail", T_BAD, 1200);
             return;
         }
-        if (k == 'r' || k == 'R') { ESP.restart(); }
+        if (k == 'r' || k == 'R') {
+            if (ui_confirm("REBOOT", "Restart POSEIDON now?")) ESP.restart();
+            draw();
+        }
         if (k == 'l' || k == 'L') {
             /* bmorcelli's Launcher uses a custom bootloader that decides
              * which partition to run from the RTC reset-reason:
@@ -572,7 +580,8 @@ void feat_ambient_preview(void)
         d.print(theme().name);
         d.setTextColor(T_DIM, T_BG);
         d.setCursor(4, BODY_Y + 12);
-        d.print(ui_ambient_enabled() ? "ambient: on" : "ambient: off");
+        d.print(!ui_motion_enabled() ? "Paused by reduced motion"
+               : ui_ambient_enabled() ? "ambient: on" : "ambient: off");
         delay(33);
     }
     ui_force_clear_body();

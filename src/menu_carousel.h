@@ -1,9 +1,9 @@
 /*
  * menu_carousel — secondary menu render style.
  *
- * Big-card single-focus layout with 4 corner brackets, big hotkey
- * badge, size-2 label, slide animation between siblings, side scroll
- * arrows, position counter. Keyboard semantics match the terminal
+ * Single-focus domain card with pixel icons, wrapped description,
+ * a separate hotkey, position counter and interruptible focus underline.
+ * Keyboard semantics match the terminal
  * mode exactly (letter mnemonics, ENTER, ESC, `=` for help) so a user
  * can flip between the two layouts at any time.
  *

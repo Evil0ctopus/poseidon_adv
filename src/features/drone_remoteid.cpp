@@ -341,14 +341,14 @@ void feat_drone_remoteid(void)
                         const drone_t &dr = s_drones[i];
                         int y = BODY_Y + 16 + i * 19;
                         bool sel = (i == cursor);
-                        if (sel) d.fillRect(0, y - 1, SCR_W, 18, 0x18C7);
-                        uint16_t bg = sel ? 0x18C7 : T_BG;
+                        if (sel) d.fillRect(0, y - 1, SCR_W, 18, T_SEL_BG);
+                        uint16_t bg = sel ? T_SEL_BG : T_BG;
 
                         d.setTextColor(sel ? T_ACCENT : T_FG, bg);
                         d.setCursor(4, y);
                         d.printf("%-18.18s", dr.uas_id[0] ? dr.uas_id : "<unregistered>");
 
-                        d.setTextColor(sel ? 0xFFFF : T_GOOD, bg);
+                        d.setTextColor(sel ? T_FG : T_GOOD, bg);
                         d.setCursor(154, y);
                         d.printf("%4ddBm", (int)dr.rssi);
 

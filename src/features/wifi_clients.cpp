@@ -364,7 +364,7 @@ static void draw_client_row(int r, int first, int cursor)
     const cli_t &c = s_clients[first + r];
     int y = BODY_Y + 28 + r * 11;
     bool sel = (first + r == cursor);
-    uint16_t bg = sel ? 0x18C7 : T_BG;
+    uint16_t bg = sel ? T_SEL_BG : T_BG;
     d.fillRect(0, y - 1, SCR_W, 11, bg);
 
     uint32_t oui = ((uint32_t)c.mac[0] << 16) |
@@ -509,7 +509,7 @@ void feat_wifi_clients(void)
                 const cli_t &c = s_clients[first + r];
                 int y = BODY_Y + 28 + r * 11;
                 bool sel = (first + r == cursor);
-                uint16_t bg = sel ? 0x18C7 : T_BG;
+                uint16_t bg = sel ? T_SEL_BG : T_BG;
                 d.fillRect(146, y, SCR_W - 146 - 2, 10, bg);
                 d.setTextColor(T_DIM, bg);
                 d.setCursor(146, y);

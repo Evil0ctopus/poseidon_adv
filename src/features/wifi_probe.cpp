@@ -375,7 +375,7 @@ static void draw_probe_list(int cursor)
         portEXIT_CRITICAL(&s_probe_mux);
         int y = BODY_Y + 16 + r * 11;
         bool sel = (first + r == cursor);
-        uint16_t bg = sel ? 0x18C7 : T_BG;
+        uint16_t bg = sel ? T_SEL_BG : T_BG;
         if (sel) d.fillRect(0, y - 1, SCR_W, 11, bg);
 
         /* Vendor or MAC */

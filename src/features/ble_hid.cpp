@@ -160,9 +160,9 @@ static int pick_disguise(void)
                 int i = first + r;
                 int y = BODY_Y + 18 + r * 12;
                 bool sel = (i == cursor);
-                uint16_t bg = sel ? 0x3007 : T_BG;
+                uint16_t bg = sel ? T_SEL_BG : T_BG;
                 if (sel) d.fillRect(0, y - 1, SCR_W, 12, bg);
-                d.setTextColor(sel ? 0xF81F : T_FG, bg);
+                d.setTextColor(sel ? T_ACCENT : T_FG, bg);
                 d.setCursor(8, y);
                 d.printf("%d  %s", i + 1, s_disguises[i]);
             }

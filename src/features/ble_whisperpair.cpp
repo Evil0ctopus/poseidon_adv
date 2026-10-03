@@ -519,7 +519,7 @@ static void draw_picker_row(int r, int idx, int cursor)
     }
     const wp_target_t &t = s_tgt[idx];
     bool sel = (idx == cursor);
-    uint16_t bg = sel ? 0x3007 : T_BG;
+    uint16_t bg = sel ? T_SEL_BG : T_BG;
     d.fillRect(0, y - 1, SCR_W, 12, bg);
 
     /* Mode tag. */
@@ -532,7 +532,7 @@ static void draw_picker_row(int r, int idx, int cursor)
 
     /* Name. */
     const char *nm = model_name(t.model_id);
-    d.setTextColor(sel ? 0xFFFF : T_FG, bg);
+    d.setTextColor(T_FG, bg);
     d.setCursor(34, y);
     if (nm) d.printf("%.22s", nm);
     else if (t.mode == WP_MODE_DISCOVERABLE)

@@ -260,14 +260,12 @@ static void draw_list(int cursor)
 {
     auto &d = M5Cardputer.Display;
 
-    d.setTextColor(T_ACCENT, T_BG);
-    d.setCursor(4, BODY_Y + 2);
-    d.printf("BLE %d ", s_count);
-    if (s_filter[0]) {
-        d.setTextColor(T_WARN, T_BG);
-        d.printf(" filter:%s", s_filter);
-    }
-    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT);
+    char header[64];
+    snprintf(header, sizeof(header), "BLE %d%s%s", s_count,
+             s_filter[0] ? " / " : "", s_filter);
+    ui_header(header);
+    d.fillRect(0, BODY_Y + 15, SCR_W, 4, T_BG);
+    d.fillRect(0, BODY_Y + 107, SCR_W, BODY_H - 107, T_BG);
 
     /* Filter + window. */
     int idx[BLE_MAX_DEVS];
@@ -275,7 +273,9 @@ static void draw_list(int cursor)
     for (int i = 0; i < s_count; ++i)
         if (dev_matches_filter(s_devs[i])) idx[n++] = i;
 
-    const int rows = 9;
+    const bool large = ui_big_text();
+    const int rows = large ? 3 : 8;
+    const int row_height = large ? 29 : 11;
 
     if (n == 0) {
         d.fillRect(0, BODY_Y + 14, SCR_W, BODY_H - 14, T_BG);
@@ -292,29 +292,40 @@ static void draw_list(int cursor)
     if (first + rows > n) first = max(0, n - rows);
 
     for (int r = 0; r < rows; ++r) {
-        int y = BODY_Y + 16 + r * 11;
+        int y = BODY_Y + 20 + r * row_height;
         if (first + r >= n) {
-            d.fillRect(0, y - 1, SCR_W, 11, T_BG);   /* blank stale slot */
+            d.fillRect(0, y - 1, SCR_W, row_height, T_BG);
             continue;
         }
         int i = idx[first + r];
         const ble_dev_t &x = s_devs[i];
         bool sel = (first + r == cursor);
-        uint16_t bg = sel ? 0x18C7 : T_BG;
-        d.fillRect(0, y - 1, SCR_W, 11, bg);          /* row owns its bg */
+        uint16_t bg = sel ? T_SEL_BG : T_BG;
+        d.fillRect(0, y - 1, SCR_W, row_height, bg);
+        if (large) {
+            ui_label(6, y, 228, sel ? T_ACCENT : T_FG, bg,
+                     x.name[0] ? x.name : x.type, 2);
+            char metadata[40];
+            snprintf(metadata, sizeof(metadata), "%d dBm / %s", x.rssi, x.type);
+            ui_label(6, y + 18, 228, T_DIM, bg, metadata);
+            if (sel) d.fillRect(0, y, 2, row_height - 3, T_ACCENT);
+            continue;
+        }
 
         d.setTextColor(T_ACCENT, bg);
         d.setCursor(2, y);  d.printf("%4d", x.rssi);
-        d.setTextColor(x.is_public ? T_WARN : T_GOOD, bg);
-        d.setCursor(30, y); d.printf("%-14.14s", x.type);
+        ui_label(30, y, 84, sel ? T_FG : T_DIM, bg, x.type);
         d.setTextColor(sel ? T_ACCENT : T_FG, bg);
-        d.setCursor(124, y);
         if (x.name[0]) {
-            d.printf("%.19s", x.name);
+            ui_label(124, y, 108, sel ? T_ACCENT : T_FG, bg, x.name);
         } else {
-            d.printf("%02X:%02X:%02X", x.addr[3], x.addr[4], x.addr[5]);
+            char address[16];
+            snprintf(address, sizeof(address), "%02X:%02X:%02X", x.addr[3], x.addr[4], x.addr[5]);
+            ui_label(124, y, 108, T_DIM, bg, address);
         }
+        if (sel) d.fillRect(0, y, 2, 8, T_ACCENT);
     }
+    ui_scrollbar(237, BODY_Y + 19, 88, first, rows, n);
 }
 
 /* Drain a NimBLEScanResults into s_devs as a belt-and-suspenders pass.

@@ -192,7 +192,7 @@ static void draw_all_row(int r, int first, int cursor)
     const acli_t &c = s_all[first + r];
     int y = BODY_Y + 18 + r * 10;
     bool sel = (first + r == cursor);
-    uint16_t bg = sel ? 0x18C7 : T_BG;
+    uint16_t bg = sel ? T_SEL_BG : T_BG;
     d.fillRect(0, y - 1, SCR_W, 10, bg);
 
     uint32_t oui = ((uint32_t)c.sta[0] << 16) |
@@ -329,7 +329,7 @@ void feat_wifi_clients_all(void)
                     const acli_t &c = s_all[first + r];
                     int y = BODY_Y + 18 + r * 10;
                     bool sel = (first + r == cursor);
-                    uint16_t bg = sel ? 0x18C7 : T_BG;
+                    uint16_t bg = sel ? T_SEL_BG : T_BG;
                     d.fillRect(184, y, SCR_W - 184, 10, bg);
                     d.setTextColor(sel ? T_ACCENT : T_FG, bg);
                     d.setCursor(184, y); d.printf("%4d", c.rssi);

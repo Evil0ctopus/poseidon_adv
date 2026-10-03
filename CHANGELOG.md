@@ -7,16 +7,41 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Deepwater UI:** shared bounded headers/text, pixel-aligned domain icons,
+  scrollable help, paged shortcut footers (`Ctrl+/`), and System > Display
+  controls for reduced motion, large text and ambient decoration.
+- **UI validation:** native production-layout tests, a cancel-only Windows
+  serial smoke test with preference restoration, paint timing, retained-heap
+  checks and checksummed LCD readback. Added a build profile for the development
+  device's verified dual-app Launcher partition layout.
 - **Morse listen + decode:** the Morse tool now has two modes (S=send, L=listen). Listen mode records through the mic, auto-calibrates against ambient noise, and live-decodes incoming dot/dash tone timing back into text on screen; the dot-length unit self-tracks the sender's speed.
 - **Defensive Monitor: GPS-tagged WiGLE CSV + live wifi/ble device counters.** DefMon's existing WiFi+BLE time-slicing now also exports every newly-seen WiFi AP to a GPS-tagged WiGLE v1.6 CSV (same schema as Wardrive's, drops into the same upload flow) alongside its anomaly JSONL log, and the screen shows uncapped running totals of distinct WiFi networks and distinct BLE devices seen this session. GPS auto-starts if the user has already opted in (same NVS flag as Wardrive). Real live BLE counting *inside Wardrive itself* was attempted and reverted — see Fixed section; DefMon is the right tool for combined WiFi+BLE because it doesn't carry Wardrive's GPS+SD+AP-table baseline overhead.
 
 ### Fixed
+- **UI fit and redraw:** root satellite/count overlap removed, WiFi/BLE/file
+  selections use theme colors, names fit their columns, help no longer loses
+  off-screen paragraphs, and clears no longer silently skip legitimate redraws.
+  Theme saves report storage failure instead of claiming success.
+- **SaltyJack icon sizing and grid paging:** replaced overlapping 24px sprites
+  with theme-aware 16px procedural glyphs; all tools are reachable across grid
+  pages rather than allowing selection to disappear off-screen.
 - **Wardrive stuck at the AP cache cap (96):** once the in-RAM AP table filled, eviction required a "clean" (already-flushed) victim slot. Rows that never got a GPS fix are never flushed (by design, to avoid null-island CSV rows), so without a GPS lock every slot eventually became permanently dirty and no new AP could ever be added again — the AP counter froze and wardrive looked hung. Eviction now also allows recycling dirty-but-no-GPS slots (they were never going to produce a valid CSV row anyway), and a full table of genuinely pending GPS-tagged rows now forces an immediate flush instead of waiting up to 3s.
 - **Two unreachable menu items:** `MENU_BLE` assigned hotkey `d` to both "Drone RID" and "Salty Deep" (Salty Deep was unreachable); `MENU_NET` assigned `w` to both "Ping Sweep" and "WPAD Abuse" (WPAD Abuse was unreachable). Found via static hotkey-collision audit of the whole menu tree. Salty Deep is now `v`, WPAD Abuse is now `z`.
 - **Crash: chaining raw-AP WiFi features back to back rebooted the device.** Portal / Evil Twin / AP Signal Test / Karma / Beacon Spam / CIW / AP Clone all bring up their own `esp_netif_create_default_wifi_ap` or `_sta` netif, several with only a fragile "does it already exist" guard (or, in CIW's case, no guard at all). Running several of these in the same session without an intervening reboot hit `assert failed: esp_netif_create_default_wifi_ap/sta ... duplicate key`, hard-crashing and rebooting the device. Found via an automated full-menu sweep test over the serial harness. Every raw-AP/STA bring-up site now unconditionally destroys any stale netif before creating its own instead of trusting an existence check.
 - **BLE controller memory stuck resident after a failed NimBLE init.** `radio_switch(RADIO_BLE)`'s failure path only checked `NimBLEDevice::isInitialized()` before deciding whether to release the Bluetooth controller — but `NimBLEDevice::init()` can fail *after* `esp_bt_controller_init()` already succeeded, leaving the controller status at INITED while NimBLE's own flag stays false. That combination meant a failed BLE bring-up (common under memory pressure — Bluetooth needs ~60KB contiguous) permanently stole ~50-60KB for the rest of the boot, starving the very next WiFi/BLE init attempt. Found while adding BLE device counting to Defensive Monitor. Fixed by force-releasing the controller whenever `esp_bt_controller_get_status()` isn't IDLE, regardless of NimBLE's own initialized flag. Benefits every feature that calls `radio_switch(RADIO_BLE)`.
 
 ### Changed
+- **POSEIDON now uses Deepwater:** navy/ice/cyan with restrained lavender, cleaner
+  Terminal and Carousel layouts, optional ambient (new default off), and an
+  automatic ~900 ms trident boot reveal with immediate key skip. Existing theme
+  IDs, shortcuts and saved preferences are preserved.
+- **UI responsiveness:** removed full-body menu-slide allocations and full-screen
+  event canvases. Notices are bounded and dismissible; event panels keep their
+  service callback ticking. Large text extends beyond notices to menu labels,
+  WiFi/BLE results and help. Layout changes immediately reopen the root.
+- **SaltyJack visuals** use the shared palette, footer paging and scrollable help;
+  entering it no longer adds a second boot splash. Destructive settings and file
+  deletion now require an explicit confirmation.
 - **Reclaimed ~9.6KB of static RAM** (205,860 -> 196,068 bytes used, verified via build report) by trimming two oversized static tables that were never the actual bottleneck for real capture correctness:
   - `triton.cpp`: `CAPTURE_Q` (deferred hashcat-line SD-write queue) and `WDR_Q` (deferred wardrive-CSV row queue) both reduced from 8 slots to 4. Both queues already drop-on-full as an accepted degradation path (documented in the code) rather than blocking the WiFi task, so halving the depth changes nothing about correctness — it only slightly lowers the burst size that can queue before a drop, which in practice never gets close to 4 in normal hunting sessions. Saves ~4.5KB.
   - `usb_guard.cpp` (Cable Guard): `UG_MAX` (before/after AP scan table size) reduced from 64 to 32. `ug_scan()` already bounds its output to this cap, so the only behavior change is that a very dense AP environment (>32 visible networks) now keeps the strongest 32 per scan instead of 64 — the delta-detection logic (comparing before vs. after) is unaffected in the common case. Saves ~5.3KB.

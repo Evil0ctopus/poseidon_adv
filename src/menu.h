@@ -26,9 +26,8 @@ struct menu_node_t {
     const char *info;            /* long-form info shown on ?-key press */
 };
 
-/* Two render styles for menu navigation. TERMINAL is the dense 7-row
- * letter-mnemonic list (default). CAROUSEL is the big-card single-focus
- * style with corner brackets, big hotkey badge, slide animation. The
+/* Two render styles for menu navigation. TERMINAL is a six-row list
+ * (four in large-text mode). CAROUSEL is a single-focus domain card. The
  * keyboard semantics are identical (letter mnemonics, ENTER, ESC). */
 enum menu_style_t {
     MENU_STYLE_TERMINAL = 0,
@@ -41,6 +40,7 @@ void         menu_style_set(menu_style_t s);
 
 /* Enter the main menu loop. Returns when user quits (rare). */
 void menu_run(void);
+void menu_execute_action(const menu_node_t *item);
 
 /* Push a named menu as an overlay (used by back-from-feature returns).
  * Not strictly needed in the MVP — menu_run's own stack handles it. */
@@ -52,7 +52,7 @@ extern const menu_node_t MENU_ROOT;
  * to the menu and press '=' there. */
 extern const menu_node_t *g_current_feature_item;
 
-/* Render the long-form help for the currently-running feature and wait
- * for any key press. Safe to call even if g_current_feature_item is
+/* Render scrollable long-form help; ENTER or Back dismisses.
+ * Safe to call even if g_current_feature_item is
  * null — shows a generic "no help available" panel. */
 void ui_show_current_help(void);

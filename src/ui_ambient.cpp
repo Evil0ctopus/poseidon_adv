@@ -26,14 +26,14 @@
 
 /* ---- NVS-backed enable flag ---- */
 static bool s_amb_loaded  = false;
-static bool s_amb_enabled = true;
+static bool s_amb_enabled = false;
 
 bool ui_ambient_enabled(void)
 {
     if (!s_amb_loaded) {
         Preferences p;
         if (p.begin("pamb", false)) {
-            s_amb_enabled = p.getBool("enabled", true);
+            s_amb_enabled = p.getBool("enabled", false);
             p.end();
         }
         s_amb_loaded = true;
@@ -258,7 +258,7 @@ static void amb_ghost_purple(int x, int y, int w, int h)
 
 void ui_ambient_tick(int x, int y, int w, int h)
 {
-    if (!ui_ambient_enabled()) return;
+    if (!ui_ambient_enabled() || !ui_motion_enabled()) return;
     if (w <= 0 || h <= 0)      return;
     switch (theme_current_id()) {
     case THEME_POSEIDON:     amb_poseidon    (x, y, w, h); break;

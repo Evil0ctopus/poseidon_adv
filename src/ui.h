@@ -3,7 +3,7 @@
  *
  * Screen layout:
  *   +------------------------------ 240 x 135 -----------------------------+
- *   | status bar (12px): radio | heap | batt | time                        |
+ *   | status bar (12px): radio | context | satellite | battery             |
  *   +----------------------------------------------------------------------+
  *   |                                                                      |
  *   |  body: menus, lists, status readouts                                 |
@@ -24,11 +24,23 @@ void ui_draw_status(const char *radio, const char *extra);
  * full-screen rebuild). Next ui_draw_status call repaints unconditionally. */
 void ui_status_invalidate(void);
 void ui_draw_footer(const char *hints);
+const char *ui_footer_hints(void);
+void ui_footer_next(void);
 
-/* Accessibility: "big text" toast flag. When true, ui_toast paints its
- * message at 2x glyph scale so users who can't read the default 6x8
- * font see errors/confirmations clearly. Persists to NVS (pui/bigtxt)
- * and is loaded once in ui_init(). */
+void ui_label(int x, int y, int width, uint16_t fg, uint16_t bg,
+              const char *text, uint8_t scale = 1);
+void ui_header(const char *title, const char *detail = nullptr);
+void ui_scrollbar(int x, int y, int height, int first, int visible, int total);
+void ui_show_text(const char *title, const char *text);
+bool ui_confirm(const char *title, const char *detail);
+bool ui_motion_enabled(void);
+void ui_motion_enabled_set(bool on);
+void feat_ui_preferences(void);
+void ui_capture_frame(void);
+
+/* Large-text mode: menu labels, WiFi/BLE results, help and notices use
+ * 2x glyphs with fewer visible rows. Status, metadata and shortcut hints
+ * stay compact. Persists to NVS (pui/bigtxt), preserving the old flag. */
 bool ui_big_text(void);
 void ui_big_text_set(bool on);
 void ui_toast(const char *msg, uint16_t color, uint32_t ms);
@@ -46,10 +58,8 @@ void ui_body_println(int row, uint16_t color, const char *fmt, ...);
 
 /* ---- animations / polish ---- */
 
-/* Slide-in animation: push the current body off to the left over 8
- * frames while the new screen slides in from the right. Call this
- * right BEFORE a screen redraw — it captures the current body bitmap,
- * calls build_new() to get the new bitmap, then animates between. */
+/* Compatibility navigation entry point. Redraws immediately without
+ * allocating full-body snapshots or blocking input for a slide. */
 typedef void (*ui_draw_fn)(void);
 void ui_slide_transition(ui_draw_fn build_new, int direction);
 /* direction: +1 = slide right→left (forward nav), -1 = left→right (back) */
@@ -58,9 +68,8 @@ void ui_slide_transition(ui_draw_fn build_new, int direction);
  * uses millis() for phase. */
 void ui_spinner(int cx, int cy, uint16_t color);
 
-/* Animated notification slide-in. Draws a banner from the top edge
- * that descends into view over ~150ms, then holds for hold_ms,
- * then slides back up. */
+/* Compatibility notice API: bounded multiline toast, any key dismisses.
+ * Caller redraws its content afterward, as with ui_toast(). */
 void ui_notify_slide(const char *title, const char *sub,
                      uint16_t color, uint32_t hold_ms);
 
@@ -73,9 +82,8 @@ void ui_ripple(int cx, int cy, uint16_t color);
  * is responsible for clearing the rect before the first call. */
 void ui_matrix_rain(int x, int y, int w, int h, uint16_t color);
 
-/* Radial wave pulse animation — 3 expanding glow rings + sweeping
- * arcs at (cx, cy). Ported from Evil-Cardputer's NTLM waiting anim.
- * Call in a refresh loop. Caller clears the region. */
+/* Three theme-aware wave rings; static when motion is reduced.
+ * Caller owns and clears the region. */
 void ui_waves(int cx, int cy, int max_radius, uint16_t base_color);
 
 /* Radar sweep — rotating line with phosphor afterglow + dot blips.
@@ -112,9 +120,9 @@ void ui_glitch(int x, int y, int w, int h);
  * active-transmission indicator. Call in refresh loop. */
 void ui_eq_bars(int x, int y, int bar_w, int bar_h_max, uint16_t color);
 
-/* Full-screen dramatic overlay — big headline + subtitle + choice of
- * backdrop animation. Blocks for ~duration_ms. Use for "HANDSHAKE!",
- * "TARGET ACQUIRED", "SIGNAL LOST", etc. */
+/* Bounded event panel, no full-screen canvas allocation. Waits up to
+ * duration_ms, polling for early dismissal. Background enum is retained
+ * for source compatibility; Deepwater deliberately omits noisy backdrops. */
 enum action_anim_t {
     ACT_BG_RADAR,     /* central radar sweep behind text */
     ACT_BG_WAVES,     /* radial pulse behind text */
@@ -125,7 +133,7 @@ void ui_action_overlay(const char *headline, const char *subtitle,
                        action_anim_t bg, uint16_t color, uint32_t duration_ms);
 
 /* POS-AUDIT-009: variant that calls tick_cb() once per loop iteration
- * (~every 20 ms) so callers with background service work — typically
+ * (~every 10 ms) so callers with background service work — typically
  * captive-portal DNS + HTTP — can keep responding to clients while
  * the overlay is on screen. cb_ctx is passed through to the callback
  * unchanged. tick_cb may be nullptr (degrades to the plain overlay).
@@ -135,12 +143,8 @@ void ui_action_overlay_with_tick(const char *headline, const char *subtitle,
                                   uint32_t duration_ms,
                                   void (*tick_cb)(void *), void *cb_ctx);
 
-/* Magenta/cyan "attack dashboard" chrome: hex stream backdrop, title
- * bar, border-flash frame, radar sweep in the corner. Call at the top
- * of every redraw — it only paints chrome, leaving the middle rows
- * free for per-feature status text. Set `flash_now=true` once per
- * event (target rotate, deauth hit, handshake) for a 1-frame border
- * strobe. */
+/* Shared dashboard title, subtle event underline and a small radar.
+ * Middle rows remain feature-owned; reduced motion suppresses the pulse. */
 void ui_dashboard_chrome(const char *title, bool flash_now);
 
 /* Cyan frequency bars. Anchor them anywhere in the body. Bar values

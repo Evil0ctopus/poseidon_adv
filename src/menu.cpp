@@ -15,6 +15,7 @@
 #include "menu_carousel.h"
 #include "heap_budget.h"
 #include "screensaver.h"
+#include <ui_layout.h>
 #include <Preferences.h>
 
 /* ---- menu render style: NVS-backed terminal/carousel toggle ---- */
@@ -900,22 +901,25 @@ static const menu_node_t MENU_SYS[] = {
       "Internal-heap free, largest contiguous block, and lifetime low-water "
       "mark. R reclaims recoverable caches (frees the ARGUS sprite etc.). "
       "The same numbers the portal and rf_preflight log to serial." },
-    { 't', "Theme", "POSEIDON / MATRIX / E-INK", nullptr, feat_theme_picker,
-      "Three curated palettes: POSEIDON (cyberpunk cyan/magenta/purple, "
-      "default), MATRIX (souped-up hacker green-on-black with cinematic "
-      "rain), E-INK (paper white for daylight / minimal mode). Live "
-      "preview, ENTER to commit." },
+    { 't', "Theme", "11 palettes / live preview", nullptr, feat_theme_picker,
+      "POSEIDON Deepwater is navy, ice-white and cyan. Ten alternate palettes "
+      "include MATRIX, E-INK and SYNTHWAVE. Browse to preview, ENTER to save, "
+      "Back to restore the original. Theme IDs and saved choices are preserved." },
+    { 'd', "Display", "Motion / large text / ambient", nullptr, feat_ui_preferences,
+      "M toggles reduced motion, B enlarges menu labels, scan results, help "
+      "and notifications, A toggles ambient "
+      "decoration. Reduced motion pauses ambient and decorative effects. "
+      "It does not stop live measurements. Ctrl+/ pages long shortcut footers." },
     { 'b', "Ambient", "Live ambient motion preview", nullptr, feat_ambient_preview,
       "Live preview of the active theme's ambient: POSEIDON paints TRON "
       "grid + cyan/magenta motes + magenta L-path packet, MATRIX runs "
       "souped-up phosphor rain, E-INK is intentionally clean. [A] toggles "
       "the NVS-backed enable flag globally if you ever want it off." },
     { 'l', "Layout", "Terminal / Carousel toggle", nullptr, feat_menu_style_toggle,
-      "Flip the menu render style. TERMINAL is the dense 7-row list with "
-      "letter mnemonics — fast for power-users. CAROUSEL is the big-card "
-      "single-focus layout with corner brackets, pulsing hotkey badge, "
-      "size-2 label, slide animation between siblings. Letter mnemonics "
-      "still work in Carousel mode. Persists to NVS." },
+      "TERMINAL is a compact six-row list with a selected-item description. "
+      "CAROUSEL shows one large domain icon, label, description and hotkey. "
+      "Both retain instant letter shortcuts, ENTER, Back and scrollable help. "
+      "The layout choice persists to NVS." },
     { 'v', "Screensaver", "Toggle 2-min idle takeover", nullptr, feat_screensaver_toggle,
       "Flip the screensaver on/off. After 2 minutes of no input, takes "
       "over the screen with a painter from the pool. Any key wakes it." },
@@ -1077,186 +1081,91 @@ static int count_children(const menu_node_t *parent)
     return n;
 }
 
-/* Lightweight idle-path companion to draw_menu. Repaints ONLY the gutter
- * strips that don't overlap row text — the strip between the magenta
- * underline and the first row, and the strip(s) below the last visible
- * row. ui_ambient_tick is called against the FULL body bounds inside a
- * setClipRect window so motes / grid / packet positions stay coherent
- * across frames instead of looping in a strip-sized box. Scroll arrows
- * are re-stamped because their bounding boxes overlap the strips. */
-static void draw_menu_anim(const menu_node_t *parent, int cursor)
-{
-    if (!ui_ambient_enabled()) return;
-    auto &d = M5Cardputer.Display;
-    int n = count_children(parent);
-    if (n <= 0) return;
-
-    const int rows    = 7;
-    const int row_h   = 13;
-    const int first_y = BODY_Y + 18;
-    const int visible = (n < rows) ? n : rows;
-    const int last_row_bottom = first_y + visible * row_h;
-
-    bool hint_drawn = false;
-    int  hint_y     = last_row_bottom + 2;
-    if (cursor >= 0 && cursor < n) {
-        const menu_node_t *sel = &parent->children[cursor];
-        if (sel->hint && hint_y < FOOTER_Y - 10) hint_drawn = true;
-    }
-    const int hint_bottom = hint_y + 8;
-
-    auto paint_strip = [&](int y, int h) {
-        if (h <= 0) return;
-        d.fillRect(0, y, SCR_W, h, T_BG);
-        d.setClipRect(0, y, SCR_W, h);
-        ui_ambient_tick(0, BODY_Y, SCR_W, BODY_H);
-    };
-
-    /* Strip 1: between magenta underline (BODY_Y+13) and first row. */
-    paint_strip(BODY_Y + 14, first_y - (BODY_Y + 14));
-    /* Strip 2: below last visible row to either hint top or footer. */
-    int s2_end = hint_drawn ? hint_y : (FOOTER_Y - 1);
-    paint_strip(last_row_bottom, s2_end - last_row_bottom);
-    /* Strip 3: below hint to footer. */
-    if (hint_drawn) paint_strip(hint_bottom, (FOOTER_Y - 1) - hint_bottom);
-
-    d.clearClipRect();
-
-    /* Re-stamp scroll arrows — their triangles overlap the strip zones. */
-    int first = cursor - rows / 2;
-    if (first < 0) first = 0;
-    if (first + rows > n) first = max(0, n - rows);
-    if (first > 0) {
-        d.fillTriangle(SCR_W - 7, first_y - 3,
-                       SCR_W - 3, first_y - 3,
-                       SCR_W - 5, first_y - 6, T_ACCENT2);
-    }
-    if (first + rows < n) {
-        int ay = first_y + rows * row_h - 2;
-        d.fillTriangle(SCR_W - 7, ay,
-                       SCR_W - 3, ay,
-                       SCR_W - 5, ay + 3, T_ACCENT2);
-    }
-}
-
 static const menu_node_t *s_menu_prev_parent = nullptr;
 static int                s_menu_prev_cursor  = -1;
 static int                s_menu_prev_first   = -1;
 static bool               s_menu_force        = true;
 
+static void draw_menu_row(const menu_node_t *parent, int index, int row, int cursor)
+{
+    auto &d = M5Cardputer.Display;
+    const menu_node_t *item = &parent->children[index];
+    const uint8_t scale = ui_big_text() ? 2 : 1;
+    const int row_height = scale == 2 ? 20 : 14;
+    const int y = BODY_Y + 19 + row * row_height;
+    const bool selected = index == cursor;
+    const uint16_t bg = selected ? T_SEL_BG : T_BG;
+    d.fillRect(4, y - 1, SCR_W - 10, row_height, T_BG);
+    if (selected) {
+        d.fillRoundRect(4, y - 1, SCR_W - 10, row_height - 1, 3, bg);
+        d.fillRect(4, y + 1, 2, row_height - 5, T_ACCENT);
+    }
+    char key[2] = {static_cast<char>(toupper(item->hotkey)), 0};
+    ui_label(12, y + 1, 12, T_ACCENT, bg, key);
+    ui_label(30, y + 1, 186, selected ? T_FG : T_DIM, bg, item->label, scale);
+    ui_label(220, y + 1, 6, selected ? T_ACCENT : T_DIM, bg, item->children ? ">" : "");
+}
+
 static void draw_menu(const menu_node_t *parent, int cursor)
 {
+    const uint32_t paint_started = millis();
     auto &d = M5Cardputer.Display;
 
     int n = count_children(parent);
 
-    const int rows       = 7;
-    const int row_h      = 13;
-    const int first_y    = BODY_Y + 18;
-    int first = cursor - rows / 2;
-    if (first < 0) first = 0;
-    if (first + rows > n) first = max(0, n - rows);
+    const int rows = ui_big_text() ? 4 : 6;
+    const int first = ui_layout::window_start(cursor, n, rows);
 
     if (!s_menu_force && parent == s_menu_prev_parent &&
         cursor == s_menu_prev_cursor && first == s_menu_prev_first) return;
-    s_menu_force       = false;
+    const bool full = s_menu_force || parent != s_menu_prev_parent || first != s_menu_prev_first;
+    const int previous = s_menu_prev_cursor;
+    s_menu_force = false;
     s_menu_prev_parent = parent;
     s_menu_prev_cursor = cursor;
     s_menu_prev_first  = first;
 
-    ui_force_clear_body();
-    /* Paint theme-aware ambient motion BEFORE menu chrome — rows draw
-     * over the top with their own opaque background so they remain
-     * readable. No-op when the user has disabled ambient via
-     * System -> Ambient. */
-    ui_ambient_tick(0, BODY_Y, SCR_W, BODY_H);
-
-    /* Title with count + scroll indicator. Title underline is a strategic
-     * magenta splash — full body width, 2 px thick — so the cyberpunk
-     * accent color reads from across the room as the dominant pop. */
-    d.setTextColor(T_ACCENT, T_BG);
-    d.setCursor(4, BODY_Y + 2);
-    d.printf("%s", parent->label);
-    (void)d.textWidth(parent->label);   /* kept for API parity with prior version */
-    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT2);
-    d.drawFastHLine(4, BODY_Y + 13, SCR_W - 8, T_ACCENT2);
-
-    /* Root-menu-only C5/TRIDENT status panel. Larger + more prominent
-     * than the global status-bar badge so the user sees satellite
-     * pairing state the instant POSEIDON boots. */
-    if (parent == &MENU_ROOT) {
-        int n5 = c5_any_online() ? c5_peer_count() : 0;
-        int px = SCR_W - 72, py = BODY_Y + 1;
-        d.drawRoundRect(px, py, 68, 11, 2, n5 > 0 ? T_GOOD : T_DIM);
-        d.fillCircle(px + 5, py + 5, 2, n5 > 0 ? T_GOOD : 0x528A);
-        d.setTextColor(n5 > 0 ? T_GOOD : T_DIM, T_BG);
-        d.setCursor(px + 12, py + 2);
-        if (n5 > 0) d.printf("C5 x%d ONLINE", n5);
-        else        d.print("C5 not paired");
+    if (full) {
+        ui_force_clear_body();
+        ui_ambient_tick(0, BODY_Y, SCR_W, BODY_H);
     }
-
-    if (n > rows) {
-        char pos[24];
-        snprintf(pos, sizeof(pos), "%d/%d", cursor + 1, n);
-        int pw = d.textWidth(pos);
-        d.setTextColor(T_DIM, T_BG);
-        d.setCursor(SCR_W - pw - 4, BODY_Y + 2);
-        d.print(pos);
-    }
-
+    char position[24];
+    snprintf(position, sizeof(position), "%d/%d", cursor + 1, n);
+    ui_header(parent->label, position);
     for (int r = 0; r < rows && first + r < n; ++r) {
-        int i = first + r;
-        const menu_node_t *c = &parent->children[i];
-        int y = first_y + r * row_h;
-        bool sel = (i == cursor);
-        if (sel) {
-            d.fillRoundRect(2, y - 1, SCR_W - 4, 12, 2, T_SEL_BG);
-            d.drawRoundRect(2, y - 1, SCR_W - 4, 12, 2, T_SEL_BD);
-            d.drawRoundRect(3, y,     SCR_W - 6, 10, 2, T_ACCENT);
-        }
-        uint16_t line_bg = sel ? T_SEL_BG : T_BG;
-        d.setTextColor(sel ? T_SEL_BD : T_ACCENT, line_bg);
-        d.setCursor(6, y + 1);
-        d.printf("[%c]", toupper(c->hotkey));
-        d.setTextColor(sel ? T_FG : T_DIM, line_bg);
-        d.setCursor(30, y + 1);
-        d.print(c->label);
-        d.setTextColor(sel ? T_ACCENT2 : T_DIM, line_bg);
-        d.setCursor(SCR_W - 12, y + 1);
-        d.print(c->action ? "." : ">");
+        if (full || first + r == previous || first + r == cursor)
+            draw_menu_row(parent, first + r, r, cursor);
     }
-
-    if (first > 0) {
-        d.fillTriangle(SCR_W - 7, first_y - 3,
-                       SCR_W - 3, first_y - 3,
-                       SCR_W - 5, first_y - 6, T_ACCENT2);
-    }
-    if (first + rows < n) {
-        int ay = first_y + rows * row_h - 2;
-        d.fillTriangle(SCR_W - 7, ay,
-                       SCR_W - 3, ay,
-                       SCR_W - 5, ay + 3, T_ACCENT2);
-    }
-
-    /* Hint strip for the selected item, below the visible rows. */
-    if (cursor >= 0 && cursor < n) {
-        const menu_node_t *sel = &parent->children[cursor];
-        if (sel->hint) {
-            int visible = (n < rows) ? n : rows;
-            int y = first_y + visible * row_h + 2;
-            if (y < FOOTER_Y - 10) {
-                d.setTextColor(T_DIM, T_BG);
-                d.setCursor(4, y);
-                d.print("» ");
-                d.print(sel->hint);
-            }
-        }
-    }
+    ui_scrollbar(SCR_W - 3, BODY_Y + 19, 84, first, rows, n);
+    d.fillRect(4, BODY_Y + 103, SCR_W - 8, 10, T_BG);
+    ui_label(6, BODY_Y + 104, SCR_W - 12, T_DIM, T_BG, parent->children[cursor].hint);
+    Serial.printf("[UI_PAINT] list %lums\n", (unsigned long)(millis() - paint_started));
 }
 
 /* Set by run_submenu before invoking a feature's action, so the feature
  * can look up its own long-form help via ui_show_current_help(). */
 const menu_node_t *g_current_feature_item = nullptr;
+
+void menu_execute_action(const menu_node_t *item)
+{
+    if (!item || !item->action) return;
+    const size_t baseline = heap_free_internal();
+    const size_t reclaimed = heap_reclaim_all();
+    Serial.printf("[FEAT_ENTER] %s free=%u largest=%u reclaimed=%u\n",
+                  item->label, (unsigned)heap_free_internal(),
+                  (unsigned)heap_largest_internal(), (unsigned)reclaimed);
+    g_current_feature_item = item;
+    item->action();
+    g_current_feature_item = nullptr;
+    pinMode(44, OUTPUT);
+    digitalWrite(44, HIGH);
+    const size_t remaining = heap_free_internal();
+    const long delta = static_cast<long>(remaining) - static_cast<long>(baseline);
+    Serial.printf("[FEAT_EXIT] %s free=%u largest=%u delta=%ld%s\n",
+                  item->label, (unsigned)remaining, (unsigned)heap_largest_internal(),
+                  delta, delta < -2048 ? " LEAK" : "");
+    ui_status_invalidate();
+}
 
 /* Forward-decl so ui_show_current_help can delegate. */
 static void show_info(const menu_node_t *item);
@@ -1270,57 +1179,13 @@ void ui_show_current_help(void)
     show_info(g_current_feature_item);
 }
 
-/* Show detailed info for the selected item until any key pressed. */
+/* Show scrollable details until ENTER or Back. */
 static void show_info(const menu_node_t *item)
 {
-    auto &d = M5Cardputer.Display;
-    ui_force_clear_body();
-    d.setTextColor(T_ACCENT2, T_BG);
-    d.setCursor(4, BODY_Y + 2);
-    d.printf("[%c] %s", toupper(item->hotkey), item->label);
-    d.drawFastHLine(4, BODY_Y + 12, SCR_W - 8, T_ACCENT2);
-
-    d.setTextColor(T_ACCENT, T_BG);
-    d.setCursor(4, BODY_Y + 18);
-    d.printf("> %s", item->hint ? item->hint : "");
-
-    /* Word-wrapped info paragraph, ~38 chars per line at 6px font. */
-    if (item->info) {
-        d.setTextColor(T_FG, T_BG);
-        const char *p = item->info;
-        int y = BODY_Y + 34;
-        while (*p && y < FOOTER_Y - 8) {
-            /* Find a wrap point within 38 chars. */
-            int take = 0, last_space = -1;
-            while (p[take] && take < 38) {
-                if (p[take] == ' ') last_space = take;
-                take++;
-            }
-            if (p[take] && last_space > 0) take = last_space;
-            char line[40];
-            strncpy(line, p, take);
-            line[take] = '\0';
-            d.setCursor(4, y);
-            d.print(line);
-            y += 10;
-            p += take;
-            if (*p == ' ') p++;
-        }
-    } else {
-        d.setTextColor(T_DIM, T_BG);
-        d.setCursor(4, BODY_Y + 34);
-        d.print("(no detailed info)");
-    }
-
-    ui_draw_footer("any key = back");
-    while (true) {
-        uint16_t k = input_poll();
-        if (k != PK_NONE) return;
-        delay(40);
-    }
+    ui_show_text(item->label, item->info ? item->info : item->hint);
 }
 
-/* Slide-transition trampoline. ui_slide_transition takes a void(void)
+/* Navigation redraw trampoline. ui_slide_transition takes a void(void)
  * painter; we stash parent+cursor here so draw_menu has its args. */
 static const menu_node_t *s_slide_parent;
 static int                s_slide_cursor;
@@ -1332,7 +1197,7 @@ static void slide_to(const menu_node_t *p, int c, int dir) {
     ui_slide_transition(slide_paint, dir);
 }
 
-#define FOOTER_HINTS "letter=go  ;/.=move  ENTER=sel  ==info  `=back"
+#define FOOTER_HINTS "ENTER open = help ` back ;/. move letter jump"
 
 static void run_submenu(const menu_node_t *parent)
 {
@@ -1347,12 +1212,15 @@ static void run_submenu(const menu_node_t *parent)
 
     int cursor = 0;
     int n = count_children(parent);
+    if (n <= 0) return;
 
+    s_menu_force = true;
     ui_draw_status(radio_name(), "");
     ui_draw_footer(FOOTER_HINTS);
     draw_menu(parent, cursor);
 
     while (true) {
+        if (menu_style_get() != MENU_STYLE_TERMINAL) return;
         uint16_t k = input_poll();
         if (k == PK_NONE) {
             /* Screensaver takeover when idle threshold passes. Returns
@@ -1369,10 +1237,15 @@ static void run_submenu(const menu_node_t *parent)
              * so text never strobes. ~33 ms cadence matches carousel. */
             static uint32_t last_anim = 0;
             uint32_t now = millis();
-            if (now - last_anim > 33) {
+            if (ui_ambient_enabled() && ui_motion_enabled() && now - last_anim > 66) {
                 last_anim = now;
-                draw_menu_anim(parent, cursor);
+                // Ambient owns only the hint-free gutter, never list glyphs.
+                M5Cardputer.Display.fillRect(0, BODY_Y + 15, SCR_W, 3, T_BG);
+                M5Cardputer.Display.setClipRect(0, BODY_Y + 15, SCR_W, 3);
+                ui_ambient_tick(0, BODY_Y, SCR_W, BODY_H);
+                M5Cardputer.Display.clearClipRect();
             }
+            ui_draw_status(radio_name(), "");
             delay(10);
             continue;
         }
@@ -1385,45 +1258,22 @@ static void run_submenu(const menu_node_t *parent)
             s_menu_force = true;
             draw_menu(parent, cursor);
             ui_draw_footer(FOOTER_HINTS);
+            ui_draw_status(radio_name(), "");
             continue;
         }
         if (k == PK_ENTER) {
             const menu_node_t *sel = &parent->children[cursor];
             if (sel->action) {
-                /* Baseline is captured BEFORE reclaim so a cache freed here and
-                 * lazily reallocated by the feature (e.g. the ARGUS sprite) nets
-                 * ~0 in the exit delta instead of a phantom LEAK. Reclaim still
-                 * runs so the feature starts from a maximally free heap.
-                 * Note: the first use of a lazy-once feature (wardrive, cctv,
-                 * ciw) legitimately allocates permanent state and will show a
-                 * one-time negative delta -- an expected non-leak. */
-                size_t hb_base = heap_free_internal();
-                size_t hb_reclaimed = heap_reclaim_all();
-                Serial.printf("[FEAT_ENTER] %s free=%u largest=%u reclaimed=%u\n",
-                              sel->label, (unsigned)heap_free_internal(),
-                              (unsigned)heap_largest_internal(),
-                              (unsigned)hb_reclaimed);
-                g_current_feature_item = sel;
-                sel->action();
-                g_current_feature_item = nullptr;
-                /* Defensive IR park — IR features should self-park HIGH
-                 * but if any path skips that, the LED stays glowing.
-                 * Hard-set OFF here after every feature returns. */
-                pinMode(44, OUTPUT); digitalWrite(44, HIGH);
-                { size_t hb_now = heap_free_internal();
-                  long hb_d = (long)hb_now - (long)hb_base;
-                    Serial.printf("[FEAT_EXIT] %s free=%u largest=%u delta=%ld%s\n",
-                      sel->label, (unsigned)hb_now, (unsigned)heap_largest_internal(),
-                      hb_d, hb_d < -2048 ? " LEAK" : ""); }
+                menu_execute_action(sel);
                 ui_draw_status(radio_name(), "");
                 ui_draw_footer(FOOTER_HINTS);
                 s_menu_force = true;
                 draw_menu(parent, cursor);
             } else if (sel->children) {
-                /* Slide into the child submenu. */
+                /* Open the child submenu without animation buffers. */
                 slide_to(sel, 0, +1);
                 run_submenu(sel);
-                /* Slide back to parent after child returns. */
+                /* Restore the parent after the child returns. */
                 ui_draw_status(radio_name(), "");
                 ui_draw_footer(FOOTER_HINTS);
                 slide_to(parent, cursor, -1);
@@ -1443,22 +1293,7 @@ static void run_submenu(const menu_node_t *parent)
                     cursor = i;
                     draw_menu(parent, cursor);
                     if (ch->action) {
-                        size_t hb_base = heap_free_internal();
-                        size_t hb_reclaimed = heap_reclaim_all();
-                        Serial.printf("[FEAT_ENTER] %s free=%u largest=%u reclaimed=%u\n",
-                                      ch->label, (unsigned)heap_free_internal(),
-                                      (unsigned)heap_largest_internal(),
-                                      (unsigned)hb_reclaimed);
-                        g_current_feature_item = ch;
-                        ch->action();
-                        g_current_feature_item = nullptr;
-                        /* Defensive IR park — same as above. */
-                        pinMode(44, OUTPUT); digitalWrite(44, HIGH);
-                        { size_t hb_now = heap_free_internal();
-                          long hb_d = (long)hb_now - (long)hb_base;
-                            Serial.printf("[FEAT_EXIT] %s free=%u largest=%u delta=%ld%s\n",
-                              ch->label, (unsigned)hb_now, (unsigned)heap_largest_internal(),
-                              hb_d, hb_d < -2048 ? " LEAK" : ""); }
+                        menu_execute_action(ch);
                         ui_draw_status(radio_name(), "");
                         ui_draw_footer(FOOTER_HINTS);
                         s_menu_force = true;
@@ -1479,5 +1314,9 @@ static void run_submenu(const menu_node_t *parent)
 
 void menu_run(void)
 {
-    run_submenu(&MENU_ROOT);
+    while (true) {
+        const menu_style_t before = menu_style_get();
+        run_submenu(&MENU_ROOT);
+        if (before == menu_style_get()) return;
+    }
 }

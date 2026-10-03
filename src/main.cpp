@@ -190,7 +190,7 @@ void setup()
     }
 #endif
 
-    /* In KERBEROS key mode, skip the splash keypress-wait so the FIDO
+    /* In KERBEROS key mode, skip the visual reveal so the FIDO
      * transport is serviced immediately after enumeration. */
     if (!kerb_boot_key_mode()) ui_splash();
 }

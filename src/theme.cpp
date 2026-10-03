@@ -1,5 +1,5 @@
 /*
- * theme.cpp — six curated palettes.
+ * theme.cpp — curated palettes, with Deepwater as the POSEIDON default.
  *
  * Persists current id to NVS namespace "pui" key "theme". theme_preview
  * stays an in-RAM-only hot-swap so the picker can browse without
@@ -12,27 +12,23 @@
 #include <Preferences.h>
 
 static const poseidon_theme_t THEMES[] = {
-    /* ---- POSEIDON CYBERPUNK ----
-     * Cyan / magenta / purple on black. T_DIM is medium ice-cyan
-     * (0x6BFF) — NOT grey — so hint/footer text stays legible on black
-     * while still reading as secondary. Selection: deep cyan-purple
-     * fill behind a bright magenta border. */
+    /* Deepwater keeps ID zero so existing saved POSEIDON selections migrate. */
     {
         "POSEIDON",
-        0x0000,             /* bg: pure black */
-        0xBFFF,             /* fg: ice cyan-white */
-        0x07FF,             /* accent: pure cyan */
-        0xF81F,             /* accent2: pure magenta */
-        0xFC60,             /* warn: warm orange */
-        0xF82A,             /* bad: red-pink */
-        0x07F8,             /* good: mint cyan */
-        0x6BFF,             /* dim: medium ice cyan (THE readability fix) */
-        0x2807,             /* sel_bg: deep cyan-purple */
-        0xF81F,             /* sel_border: magenta */
-        0x2007,             /* status_bg: dark cyan-purple */
-        0x1004,             /* status_bg2: near-black purple */
-        0x1004,             /* footer_bg */
-        0xC81F,             /* rule: bright magenta-purple */
+        0x0864,             /* bg: deep navy */
+        0xEFFF,             /* fg: ice white */
+        0x4E9F,             /* accent: clear cyan */
+        0xAC5C,             /* accent2: restrained lavender */
+        0xFE68,             /* warn: amber */
+        0xF98C,             /* bad: coral */
+        0x4ED6,             /* good: sea green */
+        0x9D36,             /* dim: readable blue-grey */
+        0x1147,             /* sel_bg: raised navy */
+        0x4E9F,             /* sel_border: cyan */
+        0x10A6,             /* status_bg */
+        0x10A6,             /* status_bg2 */
+        0x10A6,             /* footer_bg */
+        0x2969,             /* rule: quiet slate */
     },
     /* ---- MATRIX HACKER ----
      * Souped-up phosphor green. Bright leading-character matrix rain
@@ -70,7 +66,7 @@ static const poseidon_theme_t THEMES[] = {
         0x0000,             /* warn: black */
         0x0000,             /* bad: black */
         0x4208,             /* good: dark grey */
-        0x8410,             /* dim: medium grey (legible on white due to luminance contrast) */
+        0x630C,             /* dim: dark grey for paper contrast */
         0xC618,             /* sel_bg: light grey highlight */
         0x0000,             /* sel_border: black */
         0xDEFB,             /* status_bg: off-white */
@@ -115,7 +111,7 @@ static const poseidon_theme_t THEMES[] = {
         0xFE60,             /* warn: amber — warm vs cool body */
         0xC000,             /* bad: blood red */
         0x07E4,             /* good: emerald — clean "ok" against violet */
-        0x630C,             /* dim: medium purple-grey */
+        0x9C93,             /* dim: readable lavender-grey */
         0x300A,             /* sel_bg: dark violet */
         0xB37F,             /* sel_border: bright violet */
         0x2007,             /* status_bg: dark violet */
@@ -138,7 +134,7 @@ static const poseidon_theme_t THEMES[] = {
         0xFD00,             /* warn: amber */
         0xF800,             /* bad: pure red — for hostile / panic */
         0x05C0,             /* good: muted green (used sparingly) */
-        0x4208,             /* dim: dark grey */
+        0x9CD3,             /* dim: readable warm grey */
         0x4000,             /* sel_bg: dark red */
         0xE000,             /* sel_border: blood red */
         0x2000,             /* status_bg: dark red */
@@ -264,18 +260,28 @@ void theme_init(void)
     }
 }
 
-void theme_set(theme_id_t id)
+bool theme_set(theme_id_t id)
 {
-    if (id >= THEME__COUNT) id = THEME_POSEIDON;
-    s_current = id;
+    if (id < 0 || id >= THEME__COUNT) {
+        Serial.println("[UI] invalid theme ID");
+        return false;
+    }
     /* Always write through on commit — s_current may have been shifted
      * around by theme_preview() between the last NVS read and this call,
      * so we can't elide based on the RAM copy. */
     Preferences p;
-    if (p.begin("pui", false)) {
-        p.putUChar("theme", (uint8_t)id);
-        p.end();
+    if (!p.begin("pui", false)) {
+        Serial.println("[UI] cannot open theme preferences");
+        return false;
     }
+    const bool saved = p.putUChar("theme", (uint8_t)id) != 0;
+    p.end();
+    if (!saved) {
+        Serial.println("[UI] theme preference write failed");
+        return false;
+    }
+    s_current = id;
+    return true;
 }
 
 /* Live-preview helper — changes the in-RAM theme without touching NVS.
@@ -283,7 +289,10 @@ void theme_set(theme_id_t id)
  * browsing, which would otherwise thrash flash at ~300 writes/sec. */
 void theme_preview(theme_id_t id)
 {
-    if (id >= THEME__COUNT) id = THEME_POSEIDON;
+    if (id < 0 || id >= THEME__COUNT) {
+        Serial.println("[UI] invalid theme preview ID");
+        return;
+    }
     s_current = id;
 }
 

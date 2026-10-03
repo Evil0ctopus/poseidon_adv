@@ -1,51 +1,120 @@
-/*
- * SaltyJack — pirate icon pack, sprite-backed.
- *
- * Icons are Gemini-generated pixel art in the same phosphor-terminal
- * pixel-art style as the boot splash (seafoam/cyan on black). Each
- * sprite is 24x24 RGB565, baked to flash via tools/sprite_sheet_to_icons.py.
- *
- * Rendering: each icon function pixel-doubles the sprite at the given
- * scale. At scale=1 you get 24x24 native. At scale=2 → 48x48, at 3 → 72x72.
- * Pixel-doubling keeps the art blocky, which matches the splash aesthetic
- * way better than a bilinear upscale would.
- *
- * The `color` parameter is accepted for API compat with the old primitive
- * version but is IGNORED — sprites are pre-colored. Pass anything.
- */
 #pragma once
 
 #include <Arduino.h>
 #include <M5Cardputer.h>
-#include "saltyjack_style.h"
-#include "saltyjack_sprites.h"
 
-/* Draws a 24x24 RGB565 sprite at (x, y) scaled up by `s` via pixel
- * doubling. Each source pixel becomes an s×s filled rect. Cheap at the
- * scales we use (max ~72x72). */
-static inline void sj_draw_sprite(const uint16_t *sprite, int x, int y, int s)
+// Scale logical pixels, not line thickness, to keep every view sharp.
+static inline void sj_icon_line(int x, int y, uint16_t color, int scale,
+                                int x1, int y1, int x2, int y2)
 {
-    auto &d = M5Cardputer.Display;
-    if (s <= 1) {
-        d.pushImage(x, y, SJ_SPRITE_W, SJ_SPRITE_H, sprite);
-        return;
-    }
-    for (int sy = 0; sy < SJ_SPRITE_H; ++sy) {
-        for (int sx = 0; sx < SJ_SPRITE_W; ++sx) {
-            uint16_t c = sprite[sy * SJ_SPRITE_W + sx];
-            if (c == 0x0000) continue;  /* skip true-black pixels — lets the bg show through */
-            d.fillRect(x + sx * s, y + sy * s, s, s, c);
-        }
+    const int dx = abs(x2 - x1), dy = -abs(y2 - y1);
+    const int sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
+    int error = dx + dy;
+    while (true) {
+        M5Cardputer.Display.fillRect(x + x1 * scale, y + y1 * scale, scale, scale, color);
+        if (x1 == x2 && y1 == y2) break;
+        const int twice = error * 2;
+        if (twice >= dy) { error += dy; x1 += sx; }
+        if (twice <= dx) { error += dx; y1 += sy; }
     }
 }
 
-/* Each icon is just a dispatcher to sj_draw_sprite with its sprite. */
-static void icon_flag  (int x, int y, uint16_t, int s = 1) { sj_draw_sprite(sj_spr_flag,   x, y, s); }
-static void icon_skull (int x, int y, uint16_t, int s = 1) { sj_draw_sprite(sj_spr_skull,  x, y, s); }
-static void icon_swords(int x, int y, uint16_t, int s = 1) { sj_draw_sprite(sj_spr_swords, x, y, s); }
-static void icon_wheel (int x, int y, uint16_t, int s = 1) { sj_draw_sprite(sj_spr_wheel,  x, y, s); }
-static void icon_horn  (int x, int y, uint16_t, int s = 1) { sj_draw_sprite(sj_spr_horn,   x, y, s); }
-static void icon_web   (int x, int y, uint16_t, int s = 1) { sj_draw_sprite(sj_spr_web,    x, y, s); }
-static void icon_key   (int x, int y, uint16_t, int s = 1) { sj_draw_sprite(sj_spr_key,    x, y, s); }
+static void icon_flag(int x, int y, uint16_t color, int s = 1)
+{
+    sj_icon_line(x, y, color, s, 3, 2, 3, 14);
+    sj_icon_line(x, y, color, s, 4, 2, 12, 2);
+    sj_icon_line(x, y, color, s, 12, 2, 10, 5);
+    sj_icon_line(x, y, color, s, 10, 5, 12, 8);
+    sj_icon_line(x, y, color, s, 4, 8, 12, 8);
+    sj_icon_line(x, y, color, s, 6, 5, 8, 5);
+}
+
+static void icon_skull(int x, int y, uint16_t color, int s = 1)
+{
+    sj_icon_line(x, y, color, s, 5, 2, 10, 2);
+    sj_icon_line(x, y, color, s, 5, 2, 3, 4);
+    sj_icon_line(x, y, color, s, 10, 2, 12, 4);
+    sj_icon_line(x, y, color, s, 3, 4, 3, 8);
+    sj_icon_line(x, y, color, s, 12, 4, 12, 8);
+    sj_icon_line(x, y, color, s, 3, 8, 5, 10);
+    sj_icon_line(x, y, color, s, 12, 8, 10, 10);
+    sj_icon_line(x, y, color, s, 5, 10, 5, 13);
+    sj_icon_line(x, y, color, s, 10, 10, 10, 13);
+    sj_icon_line(x, y, color, s, 5, 13, 10, 13);
+    sj_icon_line(x, y, color, s, 5, 6, 6, 6);
+    sj_icon_line(x, y, color, s, 9, 6, 10, 6);
+    sj_icon_line(x, y, color, s, 7, 10, 7, 12);
+    sj_icon_line(x, y, color, s, 8, 10, 8, 12);
+}
+
+static void icon_swords(int x, int y, uint16_t color, int s = 1)
+{
+    sj_icon_line(x, y, color, s, 2, 2, 13, 13);
+    sj_icon_line(x, y, color, s, 13, 2, 2, 13);
+    sj_icon_line(x, y, color, s, 2, 2, 5, 3);
+    sj_icon_line(x, y, color, s, 13, 2, 10, 3);
+    sj_icon_line(x, y, color, s, 9, 12, 12, 9);
+    sj_icon_line(x, y, color, s, 3, 9, 6, 12);
+}
+
+static void icon_wheel(int x, int y, uint16_t color, int s = 1)
+{
+    sj_icon_line(x, y, color, s, 5, 3, 10, 3);
+    sj_icon_line(x, y, color, s, 10, 3, 12, 5);
+    sj_icon_line(x, y, color, s, 12, 5, 12, 10);
+    sj_icon_line(x, y, color, s, 12, 10, 10, 12);
+    sj_icon_line(x, y, color, s, 10, 12, 5, 12);
+    sj_icon_line(x, y, color, s, 5, 12, 3, 10);
+    sj_icon_line(x, y, color, s, 3, 10, 3, 5);
+    sj_icon_line(x, y, color, s, 3, 5, 5, 3);
+    sj_icon_line(x, y, color, s, 7, 1, 7, 14);
+    sj_icon_line(x, y, color, s, 1, 7, 14, 7);
+    sj_icon_line(x, y, color, s, 3, 3, 12, 12);
+    sj_icon_line(x, y, color, s, 12, 3, 3, 12);
+}
+
+static void icon_horn(int x, int y, uint16_t color, int s = 1)
+{
+    sj_icon_line(x, y, color, s, 4, 6, 11, 3);
+    sj_icon_line(x, y, color, s, 11, 3, 11, 11);
+    sj_icon_line(x, y, color, s, 11, 11, 4, 8);
+    sj_icon_line(x, y, color, s, 2, 6, 4, 6);
+    sj_icon_line(x, y, color, s, 2, 6, 2, 8);
+    sj_icon_line(x, y, color, s, 2, 8, 4, 8);
+    sj_icon_line(x, y, color, s, 4, 9, 5, 13);
+    sj_icon_line(x, y, color, s, 5, 13, 7, 13);
+    sj_icon_line(x, y, color, s, 14, 5, 14, 9);
+}
+
+static void icon_web(int x, int y, uint16_t color, int s = 1)
+{
+    sj_icon_line(x, y, color, s, 7, 1, 7, 14);
+    sj_icon_line(x, y, color, s, 1, 7, 14, 7);
+    sj_icon_line(x, y, color, s, 2, 2, 13, 13);
+    sj_icon_line(x, y, color, s, 13, 2, 2, 13);
+    sj_icon_line(x, y, color, s, 7, 3, 11, 7);
+    sj_icon_line(x, y, color, s, 11, 7, 7, 11);
+    sj_icon_line(x, y, color, s, 7, 11, 3, 7);
+    sj_icon_line(x, y, color, s, 3, 7, 7, 3);
+    sj_icon_line(x, y, color, s, 7, 1, 13, 7);
+    sj_icon_line(x, y, color, s, 13, 7, 7, 13);
+    sj_icon_line(x, y, color, s, 7, 13, 1, 7);
+    sj_icon_line(x, y, color, s, 1, 7, 7, 1);
+}
+
+static void icon_key(int x, int y, uint16_t color, int s = 1)
+{
+    sj_icon_line(x, y, color, s, 4, 2, 7, 2);
+    sj_icon_line(x, y, color, s, 7, 2, 9, 4);
+    sj_icon_line(x, y, color, s, 9, 4, 9, 7);
+    sj_icon_line(x, y, color, s, 9, 7, 7, 9);
+    sj_icon_line(x, y, color, s, 7, 9, 4, 9);
+    sj_icon_line(x, y, color, s, 4, 9, 2, 7);
+    sj_icon_line(x, y, color, s, 2, 7, 2, 4);
+    sj_icon_line(x, y, color, s, 2, 4, 4, 2);
+    sj_icon_line(x, y, color, s, 9, 8, 13, 12);
+    sj_icon_line(x, y, color, s, 13, 12, 13, 14);
+    sj_icon_line(x, y, color, s, 11, 10, 11, 12);
+}
 
 typedef void (*sj_icon_fn)(int, int, uint16_t, int);

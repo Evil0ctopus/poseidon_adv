@@ -1,15 +1,7 @@
 /*
- * menu_icons — pictographic glyphs for the carousel-mode hotkey badge.
- *
- * Source bitmaps live in menu_icons_data.h, generated from
- * assets/icons.jpg by scripts/convert_icons.py. The dispatcher here
- * maps top-level POSEIDON menu hotkeys to their bitmap and renders via
- * M5Cardputer.Display.drawBitmap (1-bit, "1" pixels in `color`,
- * "0" pixels transparent so the badge fill shows through).
- *
- * Submenu items return false from the dispatcher and the carousel
- * falls back to its big-letter rendering — already on-vibe inside a
- * named submenu (the title bar names the parent domain).
+ * Pixel-aligned 24px domain icons. Submenus inherit their root domain;
+ * hotkeys remain separate labels so pictographs never hide navigation.
+ * The archived bitmap sheet is not used by the Deepwater renderer.
  */
 #pragma once
 

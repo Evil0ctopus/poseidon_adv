@@ -311,9 +311,9 @@ static void draw_results(int cursor)
         const host_t &h = s_hosts[i];
         int y = BODY_Y + 18 + r * 12;
         bool sel = (i == cursor);
-        uint16_t bg = sel ? 0x3007 : T_BG;
+        uint16_t bg = sel ? T_SEL_BG : T_BG;
         if (sel) d.fillRect(0, y - 1, SCR_W, 12, bg);
-        d.setTextColor(sel ? 0xF81F : T_FG, bg);
+        d.setTextColor(sel ? T_ACCENT : T_FG, bg);
         d.setCursor(2, y);
         d.printf("%-15s", h.ip.toString().c_str());
         d.setTextColor(sel ? T_ACCENT : T_WARN, bg);

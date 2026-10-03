@@ -1,54 +1,44 @@
 /*
  * SaltyJack — shared UI style.
  *
- * Full RaspyJack aesthetic, minus color and plus wave motif. The moves:
- *   1. Thick phosphor-color border (3px) around the entire body.
- *   2. Title text "cuts through" the top border — white/cyan on black,
- *      positioned on the border line, not below it. This is RaspyJack's
- *      signature top-frame look.
- *   3. Pitch-black interior. Seafoam text. Cyan accents.
- *   4. Selected row / active counter: solid deep-teal rect with cyan text.
- *   5. Status markers on every status line:  [+] ok  [!] warn  [-] bad  [*] info
- *   6. Labeled info-block helper for capture data (user/domain/IP readouts).
- *   7. Wave watermark `≋≋` bottom-right, and `≋ ` prefix on the footer.
- *
- * Colors picked to match RaspyJack's semantic roles exactly, just shifted
- * from pure-green phosphor to seafoam/cyan.
+ * RaspyJack-inspired console markers and labeled blocks, using the active
+ * POSEIDON theme. A quiet one-pixel frame replaces the phosphor border;
+ * shortcut paging and help are shared with the rest of the interface.
  */
 #pragma once
 
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include "../../ui.h"
+#include "../../theme.h"
 
 /* ===== palette ===== */
 /* RGB565. */
-#define SJ_BG           0x0000   /* pitch black interior */
-#define SJ_FG           0x07FB   /* seafoam — primary text */
-#define SJ_FG_DIM       0x0471   /* muted seafoam for secondary/dim text */
-#define SJ_ACCENT       0x07FF   /* bright cyan — titles, active values */
-#define SJ_ACCENT_DIM   0x0475   /* deep ocean teal — dividers */
-#define SJ_FRAME        0x07FB   /* iconic frame color — matches FG */
-#define SJ_SEL_BG       0x0313   /* deep teal — selected-row rect */
-#define SJ_SEL_FG       0x07FF   /* bright cyan — text on selected rect */
-#define SJ_WARN         0xFDE0   /* amber — warnings */
-#define SJ_BAD          0xFB4A   /* coral — errors */
-#define SJ_GOOD         0x07F0   /* pure green — success */
-#define SJ_INFO         0x7FFF   /* white-ish — neutral info */
+#define SJ_BG           T_BG
+#define SJ_FG           T_FG
+#define SJ_FG_DIM       T_DIM
+#define SJ_ACCENT       T_ACCENT
+#define SJ_ACCENT_DIM   (theme().rule)
+#define SJ_FRAME        (theme().rule)
+#define SJ_SEL_BG       T_SEL_BG
+#define SJ_SEL_FG       T_ACCENT
+#define SJ_WARN         T_WARN
+#define SJ_BAD          T_BAD
+#define SJ_GOOD         T_GOOD
+#define SJ_INFO         T_FG
 
 /* ===== frame geometry ===== */
 #define SJ_FRAME_X       1
 #define SJ_FRAME_Y       (BODY_Y + 1)
 #define SJ_FRAME_W       (SCR_W - 2)
 #define SJ_FRAME_H       (BODY_H - 2)
-#define SJ_FRAME_TH      3                                 /* border thickness */
+#define SJ_FRAME_TH      3                                 /* legacy content inset */
 #define SJ_CONTENT_X     (SJ_FRAME_X + SJ_FRAME_TH + 2)
 #define SJ_CONTENT_Y     (SJ_FRAME_Y + SJ_FRAME_TH + 4)    /* below title */
 
 /* ===== frame + title ===== */
 
-/* Draws the phosphor border (3px thick) around the body, title text
- * "cutting through" the top border, and the ≋≋ watermark bottom-right.
- * Call this as the first thing on every SaltyJack page. */
+/* Call first on each SaltyJack page; content retains its original inset. */
 static inline void sj_frame(const char *title)
 {
     auto &d = M5Cardputer.Display;
@@ -56,32 +46,14 @@ static inline void sj_frame(const char *title)
     /* Wipe the body. */
     d.fillRect(0, BODY_Y, SCR_W, BODY_H, SJ_BG);
 
-    /* 3px thick border. Four concentric rectangles is cheaper than four
-     * fillRects and looks identical. */
-    for (int i = 0; i < SJ_FRAME_TH; ++i) {
-        d.drawRect(SJ_FRAME_X + i, SJ_FRAME_Y + i,
-                   SJ_FRAME_W - 2 * i, SJ_FRAME_H - 2 * i, SJ_FRAME);
-    }
+    d.drawRoundRect(SJ_FRAME_X, SJ_FRAME_Y, SJ_FRAME_W, SJ_FRAME_H, 3, SJ_FRAME);
 
-    /* Title cutting through the top border — paint a black-bg band where
-     * the title sits, then draw the title in cyan on black. This is the
-     * "RaspyJack" signature top look. */
     int title_x = SJ_FRAME_X + 6;
     int title_y = SJ_FRAME_Y - 1;   /* sits over the top border */
     int title_w = (int)strlen(title) * 6 + 6;     /* default 6x8 glyphs, pad */
     d.fillRect(title_x - 2, title_y, title_w, 9, SJ_BG);
-    d.setTextColor(SJ_ACCENT, SJ_BG);
-    d.setCursor(title_x, title_y);
-    d.print((const char *)"[");
-    d.setTextColor(SJ_SEL_FG, SJ_BG);
-    d.print(title);
-    d.setTextColor(SJ_ACCENT, SJ_BG);
-    d.print((const char *)"]");
+    ui_label(title_x, title_y, SCR_W - title_x - 8, SJ_ACCENT, SJ_BG, title);
 
-    /* Wave watermark bottom-right, just inside the frame. */
-    d.setTextColor(SJ_FG_DIM, SJ_BG);
-    d.setCursor(SJ_FRAME_X + SJ_FRAME_W - 14, SJ_FRAME_Y + SJ_FRAME_H - 10);
-    d.print((const char *)"\xE2\x89\x8B\xE2\x89\x8B");  /* ≋≋ */
 }
 
 /* Legacy alias so existing callers still compile during the retrofit. */
@@ -186,9 +158,7 @@ static inline void sj_info_row(int box_x, int box_y, int line_idx,
     d.setTextColor(SJ_FG_DIM, SJ_BG);
     d.setCursor(box_x + 4, y);
     d.print(label);
-    d.setTextColor(SJ_ACCENT, SJ_BG);
-    d.setCursor(box_x + 46, y);
-    d.print(value);
+    ui_label(box_x + 46, y, SCR_W - box_x - 54, SJ_ACCENT, SJ_BG, value);
 }
 
 /* ===== progress bar ===== */
@@ -221,13 +191,7 @@ static inline void sj_header(int y, const char *title)
 /* Footer — RaspyJack-style with a little wave prefix. */
 static inline void sj_footer(const char *hint)
 {
-    auto &d = M5Cardputer.Display;
-    d.fillRect(0, SCR_H - 11, SCR_W, 11, SJ_BG);
-    d.drawFastHLine(0, SCR_H - 12, SCR_W, SJ_ACCENT_DIM);
-    d.setTextColor(SJ_FG_DIM, SJ_BG);
-    d.setCursor(3, SCR_H - 9);
-    d.print((const char *)"\xE2\x89\x8B ");
-    d.print(hint);
+    ui_draw_footer(hint);
 }
 
 static inline void sj_status_dot(int x, int y, bool active)

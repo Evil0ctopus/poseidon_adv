@@ -23,6 +23,8 @@ enum : uint16_t {
     PK_LEFT   = 0x102,
     PK_RIGHT  = 0x103,
     PK_FN     = 0x104,
+    PK_UI_MORE = 0x105, /* Ctrl+/ cycles long on-screen shortcut hints. */
+    PK_UI_CAPTURE = 0x106, /* Serial-only display readback, on the UI task. */
 };
 
 /* One event per key press (not repeat). Returns PK_NONE if no event. */

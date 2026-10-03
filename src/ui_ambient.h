@@ -13,7 +13,8 @@
  * baseline regardless of any active feature.
  *
  * Persisted enable flag in NVS namespace "pamb", key "enabled" (default
- * true). ui_ambient_tick() respects the flag — when disabled it returns
+ * false for new preferences). Saved choices are preserved.
+ * ui_ambient_tick() also respects reduced motion; when disabled it returns
  * immediately so the menu hook is a true no-op and any visual regression
  * can be turned off without a re-flash.
  */

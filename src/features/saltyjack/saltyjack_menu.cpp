@@ -22,7 +22,8 @@
 #include "saltyjack.h"
 #include "saltyjack_style.h"
 #include "saltyjack_icons.h"
-#include "saltyjack_splash.h"
+#include "../../radio.h"
+#include "../../screensaver.h"
 #include <Arduino.h>
 #include <esp_random.h>
 
@@ -181,8 +182,7 @@ static void draw_list_row(int idx, int slot, bool sel)
     d.fillRect(SJ_FRAME_X + SJ_FRAME_TH + 1, y,
                SJ_FRAME_W - 2 * SJ_FRAME_TH - 2, SJ_LIST_ROW_H,
                sel ? SJ_SEL_BG : SJ_BG);
-    /* 16x16 pixel-art sprite at left. */
-    SJ_ITEMS[idx].icon(SJ_CONTENT_X, y, 0, 1);
+    SJ_ITEMS[idx].icon(SJ_CONTENT_X, y, sel ? SJ_SEL_FG : SJ_FG_DIM, 1);
 
     d.setTextColor(sel ? SJ_SEL_FG : SJ_FG, sel ? SJ_SEL_BG : SJ_BG);
     d.setCursor(SJ_CONTENT_X + 20, y + 4);
@@ -235,6 +235,7 @@ static void draw_list(int cursor, int offset)
 #define SJ_GRID_TILE_H   28
 #define SJ_GRID_X        (SJ_FRAME_X + SJ_FRAME_TH + 3)
 #define SJ_GRID_Y        (SJ_CONTENT_Y + 2)
+#define SJ_GRID_VISIBLE  6
 
 static bool grid_tile_pos(int i, int *x, int *y)
 {
@@ -242,14 +243,14 @@ static bool grid_tile_pos(int i, int *x, int *y)
     int row = i >> 1;
     *x = SJ_GRID_X + col * (SJ_GRID_TILE_W + 4);
     *y = SJ_GRID_Y + row * (SJ_GRID_TILE_H + 3);
-    return (*y + SJ_GRID_TILE_H <= SJ_FRAME_Y + SJ_FRAME_H - 14);
+    return (*y + SJ_GRID_TILE_H <= SJ_FRAME_Y + SJ_FRAME_H - 5);
 }
 
-static void draw_grid_tile(int i, bool sel)
+static void draw_grid_tile(int i, bool sel, int slot)
 {
     auto &d = M5Cardputer.Display;
     int x, y;
-    if (!grid_tile_pos(i, &x, &y)) return;
+    if (!grid_tile_pos(slot, &x, &y)) return;
 
     d.fillRect(x, y, SJ_GRID_TILE_W, SJ_GRID_TILE_H, sel ? SJ_SEL_BG : SJ_BG);
     d.drawRect(x, y, SJ_GRID_TILE_W, SJ_GRID_TILE_H, sel ? SJ_SEL_FG : SJ_ACCENT_DIM);
@@ -272,10 +273,11 @@ static void draw_grid(int cursor)
 {
     sj_frame("SaltyJack");
 
-    for (int i = 0; i < (int)SJ_ITEMS_N; ++i) {
+    const int first = cursor / SJ_GRID_VISIBLE * SJ_GRID_VISIBLE;
+    for (int slot = 0; slot < SJ_GRID_VISIBLE && first + slot < (int)SJ_ITEMS_N; ++slot) {
         int x, y;
-        if (!grid_tile_pos(i, &x, &y)) break;
-        draw_grid_tile(i, i == cursor);
+        if (!grid_tile_pos(slot, &x, &y)) break;
+        draw_grid_tile(first + slot, first + slot == cursor, slot);
     }
 
     sj_footer(";/.  ent=go  i=info  v=view  `=back");
@@ -333,52 +335,7 @@ static void draw_carousel(int cursor)
 /* ===== INFO PAGE (per-tool deep dive) ===== */
 static void show_info_page(int idx)
 {
-    auto &d = M5Cardputer.Display;
-    char title[32];
-    snprintf(title, sizeof(title), "%s info", SJ_ITEMS[idx].label);
-
-    sj_frame(title);
-
-    /* Blurb at top (highlighted) */
-    d.fillRect(SJ_FRAME_X + SJ_FRAME_TH + 1, SJ_CONTENT_Y - 1,
-               SJ_FRAME_W - 2 * SJ_FRAME_TH - 2, 10, SJ_SEL_BG);
-    d.setTextColor(SJ_SEL_FG, SJ_SEL_BG);
-    d.setCursor(SJ_CONTENT_X, SJ_CONTENT_Y);
-    d.print(SJ_ITEMS[idx].blurb);
-
-    /* Body text — pre-formatted with \n line breaks */
-    int y = SJ_CONTENT_Y + 14;
-    const int max_y = SJ_FRAME_Y + SJ_FRAME_H - 14;
-    const char *p = SJ_ITEMS[idx].desc;
-    char line[64];
-    size_t li = 0;
-    d.setTextColor(SJ_FG, SJ_BG);
-    while (*p && y < max_y) {
-        if (*p == '\n' || li >= sizeof(line) - 1) {
-            line[li] = '\0';
-            d.setCursor(SJ_CONTENT_X, y);
-            d.print(line);
-            y += 9;
-            li = 0;
-            if (*p == '\n') ++p;
-            continue;
-        }
-        line[li++] = *p++;
-    }
-    if (li > 0 && y < max_y) {
-        line[li] = '\0';
-        d.setCursor(SJ_CONTENT_X, y);
-        d.print(line);
-    }
-
-    sj_footer("ent/`=back");
-
-    /* Any key dismisses */
-    while (true) {
-        uint16_t k = input_poll();
-        if (k == PK_NONE) { delay(20); continue; }
-        return;
-    }
+    ui_show_text(SJ_ITEMS[idx].label, SJ_ITEMS[idx].desc);
 }
 
 /* ===== SCREENSAVER — procedural ocean waves ===== */
@@ -448,31 +405,11 @@ static void run_screensaver(void)
     }
 }
 
-/* ===== BOOT SPLASH =====
- *
- * Full-screen RGB565 PNG baked to flash (saltyjack_splash.h). We take
- * over the entire 240x135 display for a moment — status bar + footer
- * included — so the splash reads like a real boot screen. Any key
- * skips; otherwise auto-advances after ~1.5s.
- */
-static void run_boot_splash(void)
-{
-    auto &d = M5Cardputer.Display;
-
-    d.fillScreen(0x0000);
-    d.pushImage(0, 0, SALTYJACK_SPLASH_W, SALTYJACK_SPLASH_H, saltyjack_splash);
-
-    uint32_t start = millis();
-    while (millis() - start < 1500) {
-        if (input_poll() != PK_NONE) break;
-        delay(20);
-    }
-}
-
 /* ===== ROOT — dispatch everything ===== */
 void feat_saltyjack_root(void)
 {
-    run_boot_splash();
+    ui_status_invalidate();
+    ui_draw_status("SaltyJack", "");
 
     int cursor = 0;
     int offset = 0;
@@ -485,11 +422,13 @@ void feat_saltyjack_root(void)
     bool full_repaint = true;
 
     while (true) {
+        ui_draw_status("SaltyJack", "");
         /* Keep cursor visible in list view. */
         if (cursor < offset) offset = cursor;
         else if (cursor >= offset + SJ_WINDOW) offset = cursor - SJ_WINDOW + 1;
 
         if (full_repaint || view != prev_view ||
+            (view == VIEW_GRID && cursor / SJ_GRID_VISIBLE != prev_cursor / SJ_GRID_VISIBLE) ||
             (view == VIEW_LIST && offset != prev_offset)) {
             /* Static chrome + all items repainted once on entry, view-mode
              * change, or list scroll. */
@@ -509,8 +448,8 @@ void feat_saltyjack_root(void)
                     draw_list_blurb(cursor);
                     break;
                 case VIEW_GRID:
-                    draw_grid_tile(prev_cursor, false);
-                    draw_grid_tile(cursor, true);
+                    draw_grid_tile(prev_cursor, false, prev_cursor % SJ_GRID_VISIBLE);
+                    draw_grid_tile(cursor, true, cursor % SJ_GRID_VISIBLE);
                     break;
                 case VIEW_CAROUSEL:
                     draw_carousel_card(cursor);
@@ -518,6 +457,11 @@ void feat_saltyjack_root(void)
             }
         }
 
+        if (full_repaint || view != prev_view || cursor != prev_cursor) {
+            Serial.printf("[SJ_UI] view=%d first=%d cursor=%d\n", (int)view,
+                          view == VIEW_GRID ? cursor / SJ_GRID_VISIBLE * SJ_GRID_VISIBLE : offset,
+                          cursor);
+        }
         prev_cursor = cursor;
         prev_offset = offset;
         prev_view = view;
@@ -528,7 +472,8 @@ void feat_saltyjack_root(void)
         while (true) {
             k = input_poll();
             if (k != PK_NONE) break;
-            if (millis() - last_input > SJ_IDLE_MS) {
+            if (screensaver_enabled() && ui_motion_enabled() &&
+                millis() - last_input > screensaver_timeout_ms()) {
                 run_screensaver();
                 last_input = millis();
                 full_repaint = true;

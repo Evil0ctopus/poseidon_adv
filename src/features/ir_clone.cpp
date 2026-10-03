@@ -296,9 +296,9 @@ void feat_ir_clone(void)
                 int y = BODY_Y + 22 + i * 18;
                 bool sel = (i == cursor);
                 if (sel) d.fillRect(0, y - 2, SCR_W, 16, 0x3007);
-                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? 0x3007 : T_BG);
+                d.setTextColor(sel ? T_ACCENT : T_FG, sel ? T_SEL_BG : T_BG);
                 d.setCursor(4, y); d.print(PROFILES[i].name);
-                d.setTextColor(T_DIM, sel ? 0x3007 : T_BG);
+                d.setTextColor(T_DIM, sel ? T_SEL_BG : T_BG);
                 d.setCursor(4, y + 8); d.printf("%s — %d btns",
                                                 PROFILES[i].device, PROFILES[i].n_btns);
             }

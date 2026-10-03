@@ -190,7 +190,7 @@ static void draw_picker_row(int i, int cursor)
     }
     const found_t &f = s_found[i];
     bool sel = (i == cursor);
-    uint16_t bg = sel ? 0x18C7 : T_BG;
+    uint16_t bg = sel ? T_SEL_BG : T_BG;
     d.fillRect(0, y - 1, SCR_W, 12, bg);
     d.setTextColor(sel ? T_ACCENT : T_WARN, bg);
     d.setCursor(4, y);

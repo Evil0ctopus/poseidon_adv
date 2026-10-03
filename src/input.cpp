@@ -17,6 +17,7 @@
 #include "app.h"
 #include "theme.h"
 #include "sfx.h"
+#include "ui.h"
 
 /* Last-seen debug state — shown by input_debug_draw(). */
 static uint16_t s_last_key = PK_NONE;
@@ -49,6 +50,14 @@ uint16_t input_poll(void)
 {
     uint16_t k = input_poll_raw();
     if (k != PK_NONE) s_last_input_ms = millis();
+    if (k == PK_UI_MORE) {
+        ui_footer_next();
+        return PK_NONE;
+    }
+    if (k == PK_UI_CAPTURE) {
+        ui_capture_frame();
+        return PK_NONE;
+    }
     return k;
 }
 
@@ -79,6 +88,10 @@ static uint16_t input_poll_raw(void)
      *   Ctrl + [ or Ctrl+C  (familiar "cancel") */
     if (!status.word.empty()) {
         char c = status.word[0];
+        if (status.ctrl && c == '/') {
+            s_last_key = PK_UI_MORE;
+            return PK_UI_MORE;
+        }
         if (c == '`') { s_last_key = PK_ESC; sfx_back(); return PK_ESC; }
         if (status.ctrl && (c == '[' || c == 'c' || c == 'C')) {
             s_last_key = PK_ESC;
@@ -101,28 +114,32 @@ bool input_line(const char *prompt, char *out_buf, size_t out_sz)
     size_t len = 0;
 
     auto &d = M5Cardputer.Display;
+    char footer[256];
+    snprintf(footer, sizeof(footer), "%s", ui_footer_hints());
+    ui_draw_footer("ENTER accept  ` cancel");
     int y0 = BODY_Y + 20;
     d.fillRect(0, y0, SCR_W, 60, T_BG);
-    d.setTextColor(T_ACCENT, T_BG);
-    d.setCursor(4, y0);
-    d.print(prompt);
-    d.drawFastHLine(4, y0 + 30, SCR_W - 8, T_DIM);
+    ui_label(6, y0, SCR_W - 12, T_ACCENT, T_BG, prompt);
+    d.drawRoundRect(4, y0 + 12, SCR_W - 8, 22, 3, T_ACCENT);
 
     auto redraw = [&]() {
-        d.fillRect(4, y0 + 14, SCR_W - 8, 14, T_BG);
-        d.setCursor(4, y0 + 14);
-        d.setTextColor(T_FG, T_BG);
-        d.print(out_buf);
-        d.print('_');
+        constexpr size_t visible = 35;
+        const size_t start = len > visible ? len - visible : 0;
+        char window[40];
+        snprintf(window, sizeof(window), "%s_", out_buf + start);
+        ui_label(8, y0 + 19, SCR_W - 16, T_FG, T_BG, window);
+        ui_label(6, y0 + 44, SCR_W - 12, T_DIM, T_BG,
+                 start ? "< earlier text" : "Type with the keyboard");
     };
     redraw();
 
     while (true) {
         uint16_t k = input_poll();
         if (k == PK_NONE) { delay(10); continue; }
-        if (k == PK_ESC) return false;
+        if (k == PK_ESC) { ui_draw_footer(footer); return false; }
         if (k == PK_ENTER) {
             out_buf[len] = '\0';
+            ui_draw_footer(footer);
             return true;
         }
         if (k == PK_BKSP) {
