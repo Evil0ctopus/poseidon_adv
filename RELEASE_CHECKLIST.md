@@ -230,7 +230,7 @@ gh release create vX.Y.Z \
   --title "POSEIDON vX.Y.Z — <release codename>" \
   --notes-file CHANGELOG-extract.md \
   .pio/build/cardputer/firmware.factory.bin#poseidon-factory.bin \
-  .pio/build/cardputer-launcher/firmware.factory.bin#poseidon-launcher.bin \
+  .pio/build/cardputer-launcher/firmware.bin#poseidon-launcher.bin \
   c5_node/build/trident-factory.bin#trident-factory.bin
 ```
 
@@ -238,6 +238,20 @@ gh release create vX.Y.Z \
 `CHANGELOG.md`. The `#friendly-name.bin` suffix renames the uploaded
 asset so it matches what `install.html` + `manifest-trident.json`
 expect (`releases/latest/download/poseidon-factory.bin` etc.).
+
+For this fork's Deepwater release, build all three Cardputer profiles and run
+`scripts/prepare_deepwater_release.ps1 -Version X.Y.Z` to refresh tracked
+standalone/Launcher/dual-app binaries, the browser factory image and SHA256 sums.
+Publish against `Evil0ctopus/poseidon_adv`, not the upstream repository.
+Use `firmware.bin`, never `firmware.factory.bin`, for the Launcher release asset.
+The dual-app asset is only for the verified custom layout; never distribute it
+as a factory install. Do not rebuild or relabel unchanged TRIDENT firmware for
+an S3-only UI release.
+
+M5Burner catalog publication is a separate authenticated author upload, not an
+automatic consequence of pushing a GitHub tag or editing `docs/m5burner.json`.
+Verify the public catalog after publishing. Launcher can also install the
+app-only GitHub release directly through SD/WebUI or a URL favorite.
 
 ## 7. Post-push verification
 

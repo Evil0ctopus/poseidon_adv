@@ -34,6 +34,7 @@ _release/
 # track its bins or GitHub Pages has nothing to serve. Keep these
 # specifically un-ignored.
 !docs/flash/bin/**/*.bin
+!release_binaries/poseidon-launcher-dual.bin
 
 # Superpowers brainstorm session output (HTML mockups, server state) — local only
 .superpowers/

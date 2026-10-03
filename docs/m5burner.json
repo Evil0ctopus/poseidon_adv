@@ -1,11 +1,25 @@
 {
-  "name": "POSEIDON",
-  "author": "GeneralDussDuss",
-  "homepage": "https://generaldussduss.github.io/poseidon/",
-  "repo": "https://github.com/GeneralDussDuss/poseidon",
-  "description": "Commander of the Deep \u2014 keyboard-first pentesting firmware for M5Stack Cardputer-Adv. 163 features across WiFi / BLE / sub-GHz / 2.4 GHz / LoRa / IR / RJ45. Argus \u2014 the watchful mood-sprite gotchi. Six themes (POSEIDON / MATRIX / E-INK / SYNTHWAVE / PHANTOM / BLOOD) + ambient procedural motion. SaltyJack LAN arsenal (DHCP starve, Responder, WPAD, on-device NTLMv2 cracker). TRIDENT (ESP32-C5 satellite over ESP-NOW) for 5 GHz deauth, Zigbee sniff, PMKID capture.",
-  "icon": "https://generaldussduss.github.io/poseidon/assets/icon.png",
+  "name": "POSEIDON Advanced",
+  "author": "Evil0ctopus (based on GeneralDussDuss/poseidon)",
+  "homepage": "https://evil0ctopus.github.io/poseidon_adv/",
+  "repo": "https://github.com/Evil0ctopus/poseidon_adv",
+  "description": "Keyboard-first educational RF and embedded security lab for M5Stack Cardputer-Adv, for authorized use on owned hardware. Deepwater navy/cyan interface, eleven themes, crisp icons, scrollable help, reduced motion and memory-conscious rendering. Historical upstream versions are retained below.",
+  "icon": "https://evil0ctopus.github.io/poseidon_adv/assets/deepwater-cover.png",
   "firmware": [
+    {
+      "name": "POSEIDON Advanced v0.8.0 - Deepwater",
+      "version": "0.8.0",
+      "chip": "esp32s3",
+      "target": "M5Cardputer-Adv",
+      "flash_size": "8MB",
+      "psram": false,
+      "url": "https://github.com/Evil0ctopus/poseidon_adv/releases/download/v0.8.0/poseidon-factory.bin",
+      "offset": "0x0",
+      "description": "Deepwater default UI: navy/ice/cyan, short skippable boot reveal, sharp theme-aware icons, list/card menus, scrollable help, Ctrl+/ footer paging, large text and reduced motion. Removes full-screen menu/event animation buffers. Standalone factory image only; replaces the flash layout. Use poseidon-launcher.bin for existing Launcher installations instead. Public catalog publication requires the M5Burner publisher account.",
+      "date": "2026-10-03",
+      "changelog": "https://github.com/Evil0ctopus/poseidon_adv/blob/master/CHANGELOG.md",
+      "license": "MIT"
+    },
     {
       "name": "POSEIDON v0.7.0",
       "version": "0.7.0",

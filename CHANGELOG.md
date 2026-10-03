@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-03
+
 ### Added
 - **Deepwater UI:** shared bounded headers/text, pixel-aligned domain icons,
   scrollable help, paged shortcut footers (`Ctrl+/`), and System > Display

@@ -102,11 +102,13 @@ Website availability depends on this repository's GitHub Pages deployment.
 
 ### M5Burner
 
-Use [M5Burner](https://m5burner.com/) with the Deepwater factory image for a
+Use [M5Stack WebBurner](https://burner.m5stack.com/) with the Deepwater factory image for a
 standalone installation. The versioned [catalog metadata](docs/m5burner.json)
 describes this fork's release. An upstream POSEIDON listing is maintained
 separately: changing this repository does not automatically update an
 M5Burner account's public catalog entry.
+Launcher catalog availability is separate too; the app-only GitHub download
+can be installed directly through Launcher without waiting for a catalog update.
 
 ### Launcher and custom layouts
 
@@ -132,6 +134,15 @@ On Windows, with development firmware running on a connected Cardputer:
 ```powershell
 .\scripts\test_deepwater_ui.ps1 -Port COM5
 ```
+
+For release packaging after building all three profiles:
+
+```powershell
+.\scripts\prepare_deepwater_release.ps1 -Version 0.8.0
+```
+
+This refreshes the [distribution binaries](release_binaries/README.md), legacy
+aliases, browser image and SHA256 sums together.
 
 The smoke script exercises UI navigation, all eleven theme previews, display
 settings and **cancel-only** confirmation dialogs, including SaltyJack's list,
