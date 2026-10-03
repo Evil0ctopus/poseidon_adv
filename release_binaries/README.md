@@ -51,8 +51,9 @@ M5Stack public review**. Their saved Project Link is
 `https://github.com/Evil0ctopus/poseidon_adv`, with a digit zero in `Evil0ctopus`.
 That URL returns HTTP 200.
 
-The legacy Launcher feed still has the separate `poseidon_adv` 0.7.0 record.
-Its `EvilOctopus` (letter O) project link returns HTTP 404. Editing that old
-record requires signing into the legacy desktop author editor; a WebBurner
-login does not automatically migrate or repair it. Do not mistake that old
-entry for this new release. Use the app-only GitHub download in the meantime.
+The separate legacy `poseidon_adv` 0.7.0 record's broken `EvilOctopus` (letter O)
+project link was repaired through the authenticated desktop author editor.
+The saved record and canonical public M5Burner feed now both contain the
+correct `Evil0ctopus` (digit zero) URL. Launcher's cached mirror may take time
+to refresh. That record still contains 0.7.0 firmware; do not mistake it for
+this new release. Use the app-only GitHub download in the meantime.
