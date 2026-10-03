@@ -23,14 +23,16 @@ Build all variants:
 pio run -e cardputer -e cardputer-launcher -e cardputer-launcher-dual
 ```
 
-Then refresh these tracked artifacts and the browser image together:
+Then refresh these tracked release artifacts:
 
 ```powershell
 .\scripts\prepare_deepwater_release.ps1 -Version 0.8.0
 ```
 
-The browser installer serves the same standalone image from
-`docs/flash/bin/cardputer/poseidon-factory.bin`.
+The personal website's Flash hub serves a checksum-verified copy of the
+standalone image from its separate `firmware/poseidon_adv/` package.
+This firmware repository's historical website is not the personal website
+and is not deployed through GitHub Pages.
 The M5Burner metadata at `docs/m5burner.json` points to the versioned GitHub
 release. Actual M5Burner catalog publication requires an author upload;
 committing that metadata alone does not publish a catalog entry.

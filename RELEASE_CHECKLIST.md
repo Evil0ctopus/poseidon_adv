@@ -241,7 +241,8 @@ expect (`releases/latest/download/poseidon-factory.bin` etc.).
 
 For this fork's Deepwater release, build all three Cardputer profiles and run
 `scripts/prepare_deepwater_release.ps1 -Version X.Y.Z` to refresh tracked
-standalone/Launcher/dual-app binaries, the browser factory image and SHA256 sums.
+standalone/Launcher/dual-app binaries and SHA256 sums. Update the separate
+`Evil0ctopus/Evil0ctopus.github.io` personal website package from those artifacts.
 Publish against `Evil0ctopus/poseidon_adv`, not the upstream repository.
 Use `firmware.bin`, never `firmware.factory.bin`, for the Launcher release asset.
 The dual-app asset is only for the verified custom layout; never distribute it

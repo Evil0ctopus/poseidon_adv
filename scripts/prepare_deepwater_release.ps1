@@ -12,8 +12,7 @@ $Artifacts = @(
     @{ Source = ".pio\build\cardputer\firmware.factory.bin"; Destination = "release_binaries\poseidon_adv_factory.bin" },
     @{ Source = ".pio\build\cardputer\firmware.bin"; Destination = "release_binaries\poseidon_adv.bin" },
     @{ Source = ".pio\build\cardputer-launcher\firmware.bin"; Destination = "release_binaries\poseidon-launcher.bin" },
-    @{ Source = ".pio\build\cardputer-launcher-dual\firmware.bin"; Destination = "release_binaries\poseidon-launcher-dual.bin" },
-    @{ Source = ".pio\build\cardputer\firmware.factory.bin"; Destination = "docs\flash\bin\cardputer\poseidon-factory.bin" }
+    @{ Source = ".pio\build\cardputer-launcher-dual\firmware.bin"; Destination = "release_binaries\poseidon-launcher-dual.bin" }
 )
 
 foreach ($Artifact in $Artifacts) {

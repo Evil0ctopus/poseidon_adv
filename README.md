@@ -95,10 +95,11 @@ Back up your device and verify its partition table before a manual update.
 
 ### Web Flasher
 
-Open [this fork's installer](https://evil0ctopus.github.io/poseidon_adv/install.html)
+Open [the personal website's Flash hub](https://evil0ctopus.github.io/flash.html#poseidon_adv)
 in Chrome or Edge, connect a Cardputer-Advance and install the standalone image.
-The [manifest](docs/manifest.json) points to this fork's tracked Deepwater factory binary.
-Website availability depends on this repository's GitHub Pages deployment.
+The standalone package is hosted in the separate
+[website repository](https://github.com/Evil0ctopus/Evil0ctopus.github.io/tree/main/firmware/poseidon_adv).
+Do not use a factory installer over an existing Launcher/Meshtastic layout.
 
 ### M5Burner
 
@@ -142,7 +143,8 @@ For release packaging after building all three profiles:
 ```
 
 This refreshes the [distribution binaries](release_binaries/README.md), legacy
-aliases, browser image and SHA256 sums together.
+aliases and SHA256 sums together. Update the personal website's separate
+firmware package from those checksum-verified release artifacts.
 
 The smoke script exercises UI navigation, all eleven theme previews, display
 settings and **cancel-only** confirmation dialogs, including SaltyJack's list,
