@@ -41,3 +41,18 @@ app-only install format when uploading `poseidon-launcher.bin`; publish the
 standalone factory image separately. Launcher catalog availability must be
 checked independently after that upload. Direct GitHub app downloads work
 without waiting for a catalog entry.
+
+## Catalog status (2026-10-03)
+
+Both **POSEIDON Advanced - Deepwater** (standalone factory) and
+**POSEIDON Advanced - Deepwater (Launcher)** (app only), version 0.8.0, were
+uploaded through the authenticated WebBurner author page and are **pending
+M5Stack public review**. Their saved Project Link is
+`https://github.com/Evil0ctopus/poseidon_adv`, with a digit zero in `Evil0ctopus`.
+That URL returns HTTP 200.
+
+The legacy Launcher feed still has the separate `poseidon_adv` 0.7.0 record.
+Its `EvilOctopus` (letter O) project link returns HTTP 404. Editing that old
+record requires signing into the legacy desktop author editor; a WebBurner
+login does not automatically migrate or repair it. Do not mistake that old
+entry for this new release. Use the app-only GitHub download in the meantime.
