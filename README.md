@@ -51,6 +51,16 @@ This fork (`poseidon_adv`) builds on the GeneralDussDuss release with stability 
 * **On-device data management:** Integrated hex and log viewers on the display.
 * **Advanced connectivity:** GATT notification streaming, richer device/OS fingerprinting, and expanded support for hardware hat expansion modules.
 
+## Screenshots
+
+Captured from the repository's in-browser Cardputer-Adv emulator ([`docs/demo`](docs/demo/index.html)), which mirrors the firmware's menu tree, boot reveal and help overlay. They are **not** photos or LCD dumps from real hardware; the demo is simulated and does not transmit.
+
+| Boot | WiFi menu | Help |
+|---|---|---|
+| ![Boot splash](docs/screenshots/boot.png) | ![WiFi menu](docs/screenshots/wifi-menu.png) | ![Help overlay](docs/screenshots/help.png) |
+
+To run it locally: `cd docs && python3 -m http.server`, then open `http://localhost:8000/demo/index.html`.
+
 ## Deepwater interface
 
 - **Boot:** a pixel-aligned trident reveal automatically opens the menu after about 900 ms. Any key skips; security-key boot mode still bypasses the splash.
